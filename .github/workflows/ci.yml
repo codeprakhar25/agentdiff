@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cargo test
+        run: cargo test --locked
+
+      - name: Python unit tests
+        run: python3 -m unittest discover -s scripts/tests -p "test_*.py"
+
+      - name: Build debug binaries
+        run: cargo build --locked
+
+      - name: MCP smoke test
+        run: python3 scripts/mcp-smoke-test.py

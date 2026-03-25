@@ -22,6 +22,10 @@ pub struct Config {
     /// Agents to include/exclude from stats
     #[serde(default)]
     pub agent_aliases: std::collections::HashMap<String, String>,
+
+    /// Include .agentdiff/ledger.jsonl in the same commit via post-commit amend.
+    #[serde(default = "default_auto_amend_ledger")]
+    pub auto_amend_ledger: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +38,10 @@ fn default_schema() -> String {
     "1.0".to_string()
 }
 
+fn default_auto_amend_ledger() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -42,6 +50,7 @@ impl Default for Config {
             scripts_dir: None,
             repos: Vec::new(),
             agent_aliases: std::collections::HashMap::new(),
+            auto_amend_ledger: true,
         }
     }
 }
@@ -77,6 +86,10 @@ impl Config {
         self.scripts_dir
             .clone()
             .unwrap_or_else(|| dirs::home_dir().unwrap().join(".agentdiff").join("scripts"))
+    }
+
+    pub fn auto_amend_ledger_enabled(&self) -> bool {
+        self.auto_amend_ledger
     }
 
     /// Derive slug from repo root path: /home/prakh/dev/rust → -home-prakh-dev-rust

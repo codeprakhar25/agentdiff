@@ -2,9 +2,23 @@
 name = "agentdiff"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Audit and trace autonomous AI code contributions in git repositories"
 authors = ["Prakhar Khatri"]
 license = "MIT"
+readme = "README.md"
+repository = "https://github.com/codeprakhar25/agentdiff"
+homepage = "https://github.com/codeprakhar25/agentdiff"
+documentation = "https://docs.rs/agentdiff"
+keywords = ["ai", "git", "audit", "mcp", "agent"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    ".agentdiff/*",
+    ".opencode/*",
+    ".windsurf/*",
+    "agentdiff_e2e_cycle.txt",
+    "agentdiff_mcp_server_cycle.txt",
+]
 
 [[bin]]
 name = "agentdiff"

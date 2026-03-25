@@ -143,6 +143,11 @@ fn step_install_git_hook(repo_root: &Path, config: &Config) -> Result<()> {
     let pending_ledger = Config::repo_pending_ledger(repo_root);
     let ledger_path = Config::repo_ledger_path(repo_root);
     let lockfile = Config::repo_lockfile(repo_root);
+    let auto_amend_ledger = if config.auto_amend_ledger_enabled() {
+        "1"
+    } else {
+        "0"
+    };
 
     let pre_commit_content = format!(
         r#"#!/usr/bin/env bash
@@ -179,6 +184,8 @@ REPO_ROOT="{repo_root}"
 PENDING_CONTEXT="{pending_context}"
 PENDING_LEDGER="{pending_ledger}"
 LEDGER_PATH="{ledger_path}"
+LEDGER_REL=".agentdiff/ledger.jsonl"
+AUTO_AMEND_LEDGER="{auto_amend_ledger}"
 LOCKFILE="{lockfile}"
 SCRIPTS_DIR="{scripts_dir}"
 
@@ -189,12 +196,27 @@ touch "$LOCKFILE"
 trap 'rm -f "$LOCKFILE"' EXIT
 
 python3 "$SCRIPTS_DIR/finalize-ledger.py" "$REPO_ROOT" "$PENDING_LEDGER" "$PENDING_CONTEXT" "$LEDGER_PATH"
+
+if [ "$AUTO_AMEND_LEDGER" = "1" ] && [ -f "$LEDGER_PATH" ]; then
+  if git -C "$REPO_ROOT" add "$LEDGER_REL"; then
+    if ! git -C "$REPO_ROOT" diff --cached --quiet -- "$LEDGER_REL"; then
+      if git -C "$REPO_ROOT" commit --amend --no-edit --no-verify >/dev/null 2>&1; then
+        echo "agentdiff: ledger included via auto-amend"
+      else
+        echo "agentdiff: warning: auto-amend failed; ledger remains staged for manual commit" >&2
+      fi
+    fi
+  else
+    echo "agentdiff: warning: unable to stage ledger for auto-amend" >&2
+  fi
+fi
 exit 0
 "#,
         repo_root = repo_root.display(),
         pending_context = pending_context.display(),
         pending_ledger = pending_ledger.display(),
         ledger_path = ledger_path.display(),
+        auto_amend_ledger = auto_amend_ledger,
         lockfile = lockfile.display(),
         scripts_dir = scripts_dir.display(),
     );
@@ -213,6 +235,15 @@ exit 0
     println!(
         "{} installed git hooks (pre-commit, post-commit)",
         "ok".green()
+    );
+    println!(
+        "{} same-commit ledger auto-amend: {}",
+        "ok".green(),
+        if config.auto_amend_ledger_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     Ok(())
 }

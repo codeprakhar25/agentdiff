@@ -9,12 +9,19 @@ agentdiff tracks **who** (which AI agent) wrote **what** code in your repository
 ## Installation
 
 ```bash
-# Build from source
+# Install latest release (recommended)
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
+
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash -s -- --version v0.1.0
+
+# Install from crate source
 cargo install --path ~/agentdiff
 
-# Or build release and copy manually
+# Build release and copy manually
 cargo build --release
 cp target/release/agentdiff ~/.cargo/bin/
+cp target/release/agentdiff-mcp ~/.cargo/bin/
 ```
 
 ## Quick Start
@@ -85,6 +92,7 @@ agentdiff report --format markdown
 3. **Commit** — On `git commit`:
    - Pre-commit hook writes `<repo>/.git/agentdiff/pending-ledger.json`
    - Post-commit hook finalizes one line into `<repo>/.agentdiff/ledger.jsonl`
+   - By default, post-commit auto-amends the commit to include ledger changes
    - Pending files are cleared after finalize
 
 4. **View** — Use CLI commands to inspect captured data
@@ -97,10 +105,17 @@ Config stored at `~/.agentdiff/config.toml`
 schema_version = "1.0"
 data_dir = "~/.agentdiff/spillover" # optional spillover for no-repo captures
 scripts_dir = "~/.agentdiff/scripts"
+auto_amend_ledger = true
 
 [[repos]]
 path = "/home/user/project"
 slug = "-home-user-project"
+```
+
+Disable same-commit amend behavior:
+```bash
+agentdiff config set auto_amend_ledger false
+agentdiff init
 ```
 
 ## Supported Agents
@@ -137,6 +152,26 @@ Example `record_context` arguments:
   "flags": ["security"]
 }
 ```
+
+### MCP Client Config
+
+Minimal MCP stdio config is provided at:
+- `examples/mcp/agentdiff-mcp.json`
+
+Generic server block:
+```json
+{
+  "mcpServers": {
+    "agentdiff": {
+      "command": "agentdiff-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}
+```
+
+Use this same command in Claude/Cursor/Codex/OpenCode MCP settings.
 
 ## End-to-End Testing
 
@@ -181,6 +216,15 @@ tail -n 20 .agentdiff/ledger.jsonl
 - If hook `cwd` is not repo (for example `~/.cursor`), file-path-based repo resolution should still write to `<repo>/.git/agentdiff/session.jsonl`.
 - Commits with no staged overlap against captured lines should fall back to `human`.
 - Duplicate finalize on same SHA should not append duplicate ledger rows.
+
+## Release Process
+
+Tagging `v*` triggers release workflow:
+- Runs Rust + Python tests and MCP smoke test
+- Builds `agentdiff` and `agentdiff-mcp` artifacts for Linux/macOS/Windows
+- Publishes `SHA256SUMS`
+- Creates GitHub Release with artifacts
+- Optionally publishes crate to crates.io when `CARGO_REGISTRY_TOKEN` is set
 
 ## Output Formats
 
@@ -265,7 +309,7 @@ git refs (legacy migration source):
 
 ## Requirements
 
-- Rust 1.70+
+- Rust 1.85+
 - Python 3.7+ (for capture scripts)
 - Git repository
 

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "agentdiff": {
+      "command": "agentdiff-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

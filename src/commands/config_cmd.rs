@@ -20,6 +20,14 @@ fn cmd_show(config: &Config) -> Result<()> {
         config.spillover_root().display()
     );
     println!("  Scripts directory: {}", config.scripts_root().display());
+    println!(
+        "  Auto-amend ledger: {}",
+        if config.auto_amend_ledger_enabled() {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
     println!("  Config file: {}", Config::config_path().display());
     println!();
 
@@ -52,9 +60,12 @@ fn cmd_set(config: &Config, key: &str, value: &str) -> Result<()> {
         "scripts_dir" => {
             cfg.scripts_dir = Some(std::path::PathBuf::from(value));
         }
+        "auto_amend_ledger" => {
+            cfg.auto_amend_ledger = parse_bool(value)?;
+        }
         _ => {
             anyhow::bail!(
-                "Unknown config key: {}. Valid keys: spillover_dir (alias: data_dir), scripts_dir",
+                "Unknown config key: {}. Valid keys: spillover_dir (alias: data_dir), scripts_dir, auto_amend_ledger",
                 key
             );
         }
@@ -72,11 +83,22 @@ fn cmd_get(config: &Config, key: &str) -> Result<()> {
         "scripts_dir" => {
             println!("{}", config.scripts_root().display());
         }
+        "auto_amend_ledger" => {
+            println!("{}", config.auto_amend_ledger_enabled());
+        }
         _ => {
             anyhow::bail!("Unknown config key: {}", key);
         }
     }
     Ok(())
+}
+
+fn parse_bool(input: &str) -> Result<bool> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => anyhow::bail!("Invalid boolean value: {} (expected true/false)", input),
+    }
 }
 
 fn cmd_add_repo(config: &Config, path: &std::path::Path) -> Result<()> {

@@ -205,7 +205,7 @@ pub struct ConfigArgs {
 pub enum ConfigAction {
     /// Show current config
     Show,
-    /// Set a config value: agentdiff config set spillover_dir /path/to/dir
+    /// Set a config value: spillover_dir | scripts_dir | auto_amend_ledger
     Set { key: String, value: String },
     /// Get a config value
     Get { key: String },

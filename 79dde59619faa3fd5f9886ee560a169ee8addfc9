@@ -1,0 +1,55 @@
+src/cli.rs
+  b8eb1cc478a3826a 46-51,178-195
+src/store.rs
+  b8eb1cc478a3826a 2,17-20,22-25,29-36,78-134,142,145,176-180,182-183,189-221,334-348
+src/commands/list.rs
+  b8eb1cc478a3826a 8-72,74,76-77,79-123,136,159,163,168,174-203
+src/main.rs
+  b8eb1cc478a3826a 62-63
+README.md
+  b8eb1cc478a3826a 59,83,141-184,241-243,245,248-250,252-254,262-263
+src/data.rs
+  b8eb1cc478a3826a 3,110-143
+scripts/prepare-ledger.py
+  b8eb1cc478a3826a 1-279
+src/commands/ledger.rs
+  b8eb1cc478a3826a 1-160
+src/commands/mod.rs
+  b8eb1cc478a3826a 4,8
+src/util.rs
+  b8eb1cc478a3826a 8
+src/commands/show.rs
+  b8eb1cc478a3826a 1-65
+src/config.rs
+  b8eb1cc478a3826a 100-115
+scripts/finalize-ledger.py
+  b8eb1cc478a3826a 1-134
+src/commands/sync_notes.rs
+  b8eb1cc478a3826a 6-9
+Cargo.toml
+  b8eb1cc478a3826a 28,33
+scripts/record-context.py
+  b8eb1cc478a3826a 1-96
+src/init.rs
+  b8eb1cc478a3826a 13-15,39,114-116,138-139,142-144,147,149,156-181,191,195-197,202-228,230-231,237,242,750-754
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.18",
+  "base_commit_sha": "79dde59619faa3fd5f9886ee560a169ee8addfc9",
+  "prompts": {
+    "b8eb1cc478a3826a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2455-9b8c-7da1-b312-a8e42461581d",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Prakhar Khatri <prakharkhatri123@gmail.com>",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 0,
+      "accepted_lines": 1551,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -1,0 +1,21 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.18",
+  "base_commit_sha": "1db1e38288fe6460b5cb1af28b245502645e8e70",
+  "prompts": {
+    "b8eb1cc478a3826a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2455-9b8c-7da1-b312-a8e42461581d",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Prakhar Khatri <prakharkhatri123@gmail.com>",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1475,
+      "overriden_lines": 0
+    }
+  }
+}

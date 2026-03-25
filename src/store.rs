@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::data::{CommittedBatch, Entry, NotesRecord};
+use crate::data::{CommittedBatch, Entry, LedgerRecord, NotesRecord};
 use anyhow::{Context, Result};
 use glob::glob;
 use std::collections::HashMap;
@@ -14,14 +14,26 @@ impl Store {
         Self { repo_root }
     }
 
+    pub fn ledger_path(&self) -> PathBuf {
+        Config::repo_ledger_path(&self.repo_root)
+    }
+
     /// Load ALL entries from:
-    ///   1) git notes (refs/notes/agentdiff) [canonical committed]
-    ///   2) .git/agentdiff/session.jsonl      [uncommitted]
-    ///   3) legacy paths (read-only compat)
+    ///   1) .agentdiff/ledger.jsonl           [canonical committed]
+    ///   2) refs/notes/agentdiff              [legacy committed fallback]
+    ///   3) .git/agentdiff/session.jsonl      [uncommitted]
+    ///   4) legacy paths (read-only compat)
     pub fn load_entries(&self) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
 
-        self.load_notes_entries(&mut entries)?;
+        let ledger_records = self.load_ledger_records()?;
+        if ledger_records.is_empty() {
+            self.load_notes_entries(&mut entries)?;
+        } else {
+            for record in &ledger_records {
+                self.ledger_record_to_entries(record, &mut entries);
+            }
+        }
 
         let session_path = Config::repo_session_log(&self.repo_root);
         self.load_session_from(&session_path, &mut entries, false)?;
@@ -63,7 +75,63 @@ impl Store {
         Ok(entries)
     }
 
-    fn load_notes_entries(&self, out: &mut Vec<Entry>) -> Result<()> {
+    pub fn load_ledger_records(&self) -> Result<Vec<LedgerRecord>> {
+        let path = self.ledger_path();
+        if !path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+
+        let mut by_sha: HashMap<String, LedgerRecord> = HashMap::new();
+        for (idx, line) in raw.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+
+            let record: LedgerRecord = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!(
+                        "agentdiff: skipping malformed ledger line {} in {}: {}",
+                        idx + 1,
+                        path.display(),
+                        err
+                    );
+                    continue;
+                }
+            };
+
+            match by_sha.get(&record.sha) {
+                Some(existing) if existing.ts > record.ts => {}
+                _ => {
+                    by_sha.insert(record.sha.clone(), record);
+                }
+            }
+        }
+
+        let mut out: Vec<LedgerRecord> = by_sha.into_values().collect();
+        out.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.sha.cmp(&b.sha)));
+        Ok(out)
+    }
+
+    pub fn find_ledger_record(&self, sha_prefix: &str) -> Result<Option<LedgerRecord>> {
+        let records = self.load_ledger_records()?;
+        let mut matched: Vec<LedgerRecord> = records
+            .into_iter()
+            .filter(|r| r.sha == sha_prefix || r.sha.starts_with(sha_prefix))
+            .collect();
+
+        if matched.is_empty() {
+            return Ok(None);
+        }
+        matched.sort_by(|a, b| b.ts.cmp(&a.ts));
+        Ok(matched.into_iter().next())
+    }
+
+    pub fn load_notes_records(&self) -> Result<Vec<NotesRecord>> {
         let list_output = std::process::Command::new("git")
             .args(["notes", "--ref=agentdiff", "list"])
             .current_dir(&self.repo_root)
@@ -71,9 +139,10 @@ impl Store {
             .context("listing agentdiff notes")?;
 
         if !list_output.status.success() {
-            return Ok(());
+            return Ok(Vec::new());
         }
 
+        let mut records = Vec::new();
         let list_raw = String::from_utf8_lossy(&list_output.stdout);
         for line in list_raw.lines() {
             let line = line.trim();
@@ -104,11 +173,52 @@ impl Store {
                     continue;
                 }
             };
-
-            self.notes_record_to_entries(&record, out);
+            records.push(record);
         }
 
+        Ok(records)
+    }
+
+    fn load_notes_entries(&self, out: &mut Vec<Entry>) -> Result<()> {
+        for record in self.load_notes_records()? {
+            self.notes_record_to_entries(&record, out);
+        }
         Ok(())
+    }
+
+    fn ledger_record_to_entries(&self, record: &LedgerRecord, out: &mut Vec<Entry>) {
+        let tool = record.tool.clone().unwrap_or_else(|| "commit".to_string());
+        for file in &record.files_touched {
+            let abs = self.repo_root.join(file).to_string_lossy().to_string();
+            let lines = expand_ranges(record.lines.get(file).cloned().unwrap_or_default());
+
+            out.push(Entry {
+                timestamp: record.ts,
+                agent: record.agent.clone(),
+                mode: record.mode.clone(),
+                model: record.model.clone(),
+                session_id: record.session_id.clone(),
+                tool: tool.clone(),
+                file: file.clone(),
+                abs_file: abs,
+                prompt: if record.prompt_excerpt.is_empty() {
+                    None
+                } else {
+                    Some(record.prompt_excerpt.clone())
+                },
+                acceptance: "verbatim".to_string(),
+                lines,
+                old: None,
+                new: None,
+                content_preview: None,
+                total_lines: None,
+                edit_count: None,
+                edits: None,
+                committed: true,
+                commit_hash: record.sha.clone(),
+                batch_author: record.author.clone().unwrap_or_default(),
+            });
+        }
     }
 
     fn notes_record_to_entries(&self, record: &NotesRecord, out: &mut Vec<Entry>) {
@@ -220,4 +330,19 @@ impl Store {
         let all = self.load_entries()?;
         Ok(all.into_iter().filter(|e| !e.committed).collect())
     }
+}
+
+fn expand_ranges(ranges: Vec<(u32, u32)>) -> Vec<u32> {
+    let mut out = Vec::new();
+    for (start, end) in ranges {
+        if start == 0 || end == 0 {
+            continue;
+        }
+        let lo = start.min(end);
+        let hi = start.max(end);
+        out.extend(lo..=hi);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
 }

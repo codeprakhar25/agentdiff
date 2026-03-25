@@ -3,6 +3,10 @@ use colored::Colorize;
 
 pub fn run(store: &Store) -> anyhow::Result<()> {
     println!("{}", "agentdiff sync-notes".cyan().bold());
+    println!(
+        "{} sync-notes is legacy; committed source-of-truth is .agentdiff/ledger.jsonl",
+        "!".yellow()
+    );
 
     let origin_url = std::process::Command::new("git")
         .args(["config", "--get", "remote.origin.url"])

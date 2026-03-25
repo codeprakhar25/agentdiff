@@ -59,6 +59,8 @@ fn main() -> anyhow::Result<()> {
         Command::Report(args) => commands::report::run(&store, &args),
         Command::Diff(args) => commands::diff::run(&store, &args),
         Command::Log(args) => commands::log::run(&store, &args),
+        Command::Show(args) => commands::show::run(&store, &args),
+        Command::Ledger(args) => commands::ledger::run(&store, &args),
         Command::SyncNotes => commands::sync_notes::run(&store),
         Command::Config(args) => commands::config_cmd::run(&config, &args),
     }

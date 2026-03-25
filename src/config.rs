@@ -97,6 +97,22 @@ impl Config {
         Self::repo_session_dir(repo_root).join("hook.lock")
     }
 
+    pub fn repo_pending_context(repo_root: &std::path::Path) -> PathBuf {
+        Self::repo_session_dir(repo_root).join("pending.json")
+    }
+
+    pub fn repo_pending_ledger(repo_root: &std::path::Path) -> PathBuf {
+        Self::repo_session_dir(repo_root).join("pending-ledger.json")
+    }
+
+    pub fn repo_ledger_dir(repo_root: &std::path::Path) -> PathBuf {
+        repo_root.join(".agentdiff")
+    }
+
+    pub fn repo_ledger_path(repo_root: &std::path::Path) -> PathBuf {
+        Self::repo_ledger_dir(repo_root).join("ledger.jsonl")
+    }
+
     pub fn load() -> anyhow::Result<Self> {
         let primary = Self::config_path();
         if primary.exists() {

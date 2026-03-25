@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "post_cascade_response_with_transcript": [
+      {
+        "command": "python3 /home/prakh/.agentdiff/scripts/capture-windsurf.py",
+        "type": "command"
+      }
+    ],
+    "post_write_code": [
+      {
+        "command": "python3 /home/prakh/.agentdiff/scripts/capture-windsurf.py",
+        "type": "command"
+      }
+    ]
+  }
+}

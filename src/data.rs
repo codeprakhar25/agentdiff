@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// One edit event captured by a capture script.
 /// Matches the JSON schema written by capture.py / agentblame-capture.py.
@@ -105,4 +106,38 @@ pub struct NotesFileAttribution {
     /// [start, end] (inclusive) line ranges at this commit revision.
     #[serde(default)]
     pub ranges: Vec<(u32, u32)>,
+}
+
+/// Canonical append-only ledger entry (one line per commit) stored at
+/// <repo>/.agentdiff/ledger.jsonl
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerRecord {
+    pub sha: String,
+    pub ts: DateTime<Utc>,
+    pub agent: String,
+    pub model: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub files_touched: Vec<String>,
+    /// Per-file line ranges [start, end] (inclusive)
+    #[serde(default)]
+    pub lines: HashMap<String, Vec<(u32, u32)>>,
+    #[serde(default)]
+    pub prompt_excerpt: String,
+    #[serde(default)]
+    pub prompt_hash: String,
+    #[serde(default)]
+    pub files_read: Vec<String>,
+    #[serde(default)]
+    pub intent: Option<String>,
+    #[serde(default)]
+    pub trust: Option<u8>,
+    #[serde(default)]
+    pub flags: Vec<String>,
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
 }

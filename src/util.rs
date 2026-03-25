@@ -5,7 +5,7 @@ pub fn agent_color(agent: &str) -> Color {
     match agent {
         "claude-code" => Color::BrightBlue,
         "cursor" => Color::BrightYellow,
-        "codex" | "windsurf" | "aider" | "antigravity" => Color::Yellow,
+        "codex" | "windsurf" | "aider" | "antigravity" | "opencode" => Color::Yellow,
         "human" => Color::BrightGreen,
         _ => Color::White,
     }

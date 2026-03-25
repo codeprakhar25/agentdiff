@@ -5,6 +5,8 @@ AgentDiff capture script for Cursor hooks.
 import os
 import sys
 import json
+import re
+import subprocess
 from datetime import datetime, timezone
 
 
@@ -31,7 +33,6 @@ def first(payload: dict, *keys, default=None):
 
 
 def find_repo_root(cwd: str) -> str:
-    import subprocess
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -42,7 +43,50 @@ def find_repo_root(cwd: str) -> str:
         return cwd
 
 
-def get_session_log(cwd: str) -> str:
+def normalize_path(path: str, cwd: str = "") -> str:
+    if not isinstance(path, str):
+        return ""
+    p = path.strip()
+    if not p:
+        return ""
+
+    p = p.replace("\\", "/")
+    p = re.sub(r"/{2,}", "/", p)
+    p = os.path.expanduser(p)
+
+    if os.path.isabs(p):
+        return os.path.abspath(p)
+    if cwd:
+        return os.path.abspath(os.path.join(cwd, p))
+    return os.path.abspath(p)
+
+
+def is_git_repo(path: str) -> bool:
+    return bool(path) and os.path.exists(os.path.join(path, ".git"))
+
+
+def find_repo_root_from_path(path: str) -> str:
+    if not path:
+        return ""
+    start = path if os.path.isdir(path) else os.path.dirname(path)
+    if not start:
+        return ""
+    root = find_repo_root(start)
+    if is_git_repo(root):
+        return root
+    return ""
+
+
+def is_within_repo(path: str, repo_root: str) -> bool:
+    if not path or not repo_root:
+        return False
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(repo_root)]) == os.path.abspath(repo_root)
+    except Exception:
+        return False
+
+
+def get_session_log(cwd: str, repo_root_hint: str = "") -> str:
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -50,8 +94,8 @@ def get_session_log(cwd: str) -> str:
             os.makedirs(parent, exist_ok=True)
         return override
 
-    repo_root = find_repo_root(cwd)
-    if os.path.exists(os.path.join(repo_root, ".git")):
+    repo_root = repo_root_hint or find_repo_root(cwd)
+    if is_git_repo(repo_root):
         base = os.path.join(repo_root, ".git", "agentdiff")
         os.makedirs(base, exist_ok=True)
         return os.path.join(base, "session.jsonl")
@@ -98,7 +142,8 @@ def main():
         debug_log(f"cached prompt for conversation_id={conversation_id}")
         sys.exit(0)
 
-    cwd = first(payload, "cwd", "workspace", "workspace_path", "workspacePath", default=os.getcwd())
+    cwd_raw = first(payload, "cwd", "workspace", "workspace_path", "workspacePath", default=os.getcwd())
+    cwd = normalize_path(str(cwd_raw), os.getcwd())
     repo_root = find_repo_root(cwd)
 
     abs_file = first(payload, "file_path", "filePath", "path", default="")
@@ -107,8 +152,19 @@ def main():
     if not abs_file:
         debug_log("skip: missing abs_file")
         sys.exit(0)
-    in_repo = os.path.exists(os.path.join(repo_root, ".git"))
-    if in_repo and not abs_file.startswith(repo_root):
+
+    abs_file = normalize_path(str(abs_file), cwd)
+    if not abs_file:
+        debug_log("skip: invalid abs_file after normalize")
+        sys.exit(0)
+
+    file_repo_root = find_repo_root_from_path(abs_file)
+    if file_repo_root:
+        repo_root = file_repo_root
+
+    in_repo = is_git_repo(repo_root)
+    if in_repo and not is_within_repo(abs_file, repo_root):
+        debug_log(f"skip: file outside repo abs_file={abs_file!r} repo_root={repo_root!r}")
         sys.exit(0)
 
     # Get prompt for agent mode
@@ -132,7 +188,7 @@ def main():
         "model": model,
         "session_id": first(payload, "conversation_id", "conversationId", default="unknown"),
         "tool": event_name,
-        "file": abs_file[len(repo_root):].lstrip("/") if in_repo else abs_file,
+        "file": os.path.relpath(abs_file, repo_root) if in_repo else abs_file,
         "abs_file": abs_file,
         "prompt": prompt,
         "acceptance": "verbatim",
@@ -159,10 +215,14 @@ def main():
         line_num = first(payload, "line_number", "lineNumber", default=1)
         entry["lines"] = [line_num if isinstance(line_num, int) else 1]
 
-    session_log = get_session_log(cwd)
+    session_log = get_session_log(cwd, repo_root if in_repo else "")
     with open(session_log, "a") as f:
         f.write(json.dumps(entry) + "\n")
-    debug_log(f"wrote entry event={event_name} file={entry['file']} lines={entry.get('lines')}")
+    debug_log(
+        "wrote entry "
+        f"event={event_name} file={entry['file']} lines={entry.get('lines')} "
+        f"cwd={cwd!r} repo_root={repo_root!r} session_log={session_log!r}"
+    )
 
 
 if __name__ == "__main__":

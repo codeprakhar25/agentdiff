@@ -10,6 +10,10 @@ license = "MIT"
 name = "agentdiff"
 path = "src/main.rs"
 
+[[bin]]
+name = "agentdiff-mcp"
+path = "src/bin/agentdiff-mcp.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive", "color", "env"] }
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +25,7 @@ dirs = "5"
 anyhow = "1"
 thiserror = "1"
 glob = "0.3"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

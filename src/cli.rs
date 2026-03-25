@@ -43,6 +43,12 @@ pub enum Command {
     /// Show chronological history of AI contributions
     Log(LogArgs),
 
+    /// Show one ledger entry by commit SHA
+    Show(ShowArgs),
+
+    /// Ledger maintenance commands
+    Ledger(LedgerArgs),
+
     /// Fetch refs/notes/agentdiff from origin
     SyncNotes,
 
@@ -167,6 +173,26 @@ pub struct LogArgs {
     /// Show full prompt text
     #[arg(long)]
     pub full_prompt: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ShowArgs {
+    /// Full SHA or SHA prefix from .agentdiff/ledger.jsonl
+    pub sha: String,
+}
+
+#[derive(Args, Debug)]
+pub struct LedgerArgs {
+    #[command(subcommand)]
+    pub action: LedgerAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum LedgerAction {
+    /// Normalize, sort, and deduplicate ledger.jsonl
+    Repair,
+    /// Import legacy refs/notes/agentdiff records into ledger.jsonl
+    ImportNotes,
 }
 
 #[derive(Args, Debug)]

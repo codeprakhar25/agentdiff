@@ -1,8 +1,10 @@
 pub mod blame;
 pub mod config_cmd;
 pub mod diff;
+pub mod ledger;
 pub mod list;
 pub mod log;
 pub mod report;
+pub mod show;
 pub mod stats;
 pub mod sync_notes;

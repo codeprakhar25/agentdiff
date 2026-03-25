@@ -10,6 +10,9 @@ const WINDSURF_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-windsurf.
 const OPENCODE_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-opencode.py");
 const OPENCODE_PLUGIN_TEMPLATE: &str = include_str!("../scripts/opencode-agentdiff.ts");
 const ANTIGRAVITY_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-antigravity.py");
+const PREPARE_LEDGER_SCRIPT: &str = include_str!("../scripts/prepare-ledger.py");
+const FINALIZE_LEDGER_SCRIPT: &str = include_str!("../scripts/finalize-ledger.py");
+const RECORD_CONTEXT_SCRIPT: &str = include_str!("../scripts/record-context.py");
 const WRITE_NOTE_SCRIPT: &str = include_str!("../scripts/write-note.py");
 
 pub fn run_init(
@@ -33,10 +36,9 @@ pub fn run_init(
     // Step 2 — install Python scripts into ~/.agentdiff/scripts/
     step_install_scripts(config)?;
 
-    // Step 3 — install git hooks and notes config
+    // Step 3 — install git hooks
     if !no_git_hook {
         step_install_git_hook(repo_root, config)?;
-        step_configure_git_notes(repo_root)?;
     }
 
     // Step 4 — configure Claude Code ~/.claude/settings.json
@@ -109,6 +111,9 @@ fn step_install_scripts(config: &Config) -> Result<()> {
         ("capture-windsurf.py", WINDSURF_CAPTURE_SCRIPT),
         ("capture-opencode.py", OPENCODE_CAPTURE_SCRIPT),
         ("capture-antigravity.py", ANTIGRAVITY_CAPTURE_SCRIPT),
+        ("prepare-ledger.py", PREPARE_LEDGER_SCRIPT),
+        ("finalize-ledger.py", FINALIZE_LEDGER_SCRIPT),
+        ("record-context.py", RECORD_CONTEXT_SCRIPT),
         ("write-note.py", WRITE_NOTE_SCRIPT),
     ];
     for (name, content) in &scripts {
@@ -130,12 +135,40 @@ fn step_install_git_hook(repo_root: &Path, config: &Config) -> Result<()> {
         bail!("Not a git repository (no .git/hooks directory)");
     }
 
-    let hook_path = hooks_dir.join("post-commit");
+    let pre_commit_path = hooks_dir.join("pre-commit");
+    let post_commit_path = hooks_dir.join("post-commit");
     let scripts_dir = config.scripts_root();
     let session_log = Config::repo_session_log(repo_root);
+    let pending_context = Config::repo_pending_context(repo_root);
+    let pending_ledger = Config::repo_pending_ledger(repo_root);
+    let ledger_path = Config::repo_ledger_path(repo_root);
     let lockfile = Config::repo_lockfile(repo_root);
 
-    let hook_content = format!(
+    let pre_commit_content = format!(
+        r#"#!/usr/bin/env bash
+# agentdiff pre-commit hook — managed by agentdiff init
+# DO NOT EDIT — regenerate with: agentdiff init
+
+set -euo pipefail
+
+REPO_ROOT="{repo_root}"
+SESSION_LOG="{session_log}"
+PENDING_CONTEXT="{pending_context}"
+PENDING_LEDGER="{pending_ledger}"
+SCRIPTS_DIR="{scripts_dir}"
+
+mkdir -p "$(dirname "$PENDING_CONTEXT")"
+python3 "$SCRIPTS_DIR/prepare-ledger.py" "$REPO_ROOT" "$SESSION_LOG" "$PENDING_CONTEXT" "$PENDING_LEDGER"
+exit 0
+"#,
+        repo_root = repo_root.display(),
+        session_log = session_log.display(),
+        pending_context = pending_context.display(),
+        pending_ledger = pending_ledger.display(),
+        scripts_dir = scripts_dir.display(),
+    );
+
+    let post_commit_content = format!(
         r#"#!/usr/bin/env bash
 # agentdiff post-commit hook — managed by agentdiff init
 # DO NOT EDIT — regenerate with: agentdiff init
@@ -143,56 +176,70 @@ fn step_install_git_hook(repo_root: &Path, config: &Config) -> Result<()> {
 set -euo pipefail
 
 REPO_ROOT="{repo_root}"
-SESSION_LOG="{session_log}"
+PENDING_CONTEXT="{pending_context}"
+PENDING_LEDGER="{pending_ledger}"
+LEDGER_PATH="{ledger_path}"
 LOCKFILE="{lockfile}"
 SCRIPTS_DIR="{scripts_dir}"
 
-[ -f "$SESSION_LOG" ] && [ -s "$SESSION_LOG" ] || exit 0
 [ -f "$LOCKFILE" ] && exit 0
 
 mkdir -p "$(dirname "$LOCKFILE")"
 touch "$LOCKFILE"
 trap 'rm -f "$LOCKFILE"' EXIT
 
-python3 "$SCRIPTS_DIR/write-note.py" "$REPO_ROOT" "$SESSION_LOG"
+python3 "$SCRIPTS_DIR/finalize-ledger.py" "$REPO_ROOT" "$PENDING_LEDGER" "$PENDING_CONTEXT" "$LEDGER_PATH"
 exit 0
 "#,
         repo_root = repo_root.display(),
-        session_log = session_log.display(),
+        pending_context = pending_context.display(),
+        pending_ledger = pending_ledger.display(),
+        ledger_path = ledger_path.display(),
         lockfile = lockfile.display(),
         scripts_dir = scripts_dir.display(),
     );
 
-    // If a hook already exists that is NOT ours, append rather than overwrite
-    if hook_path.exists() {
-        let existing = fs::read_to_string(&hook_path)?;
-        if !existing.contains("agentdiff post-commit hook") {
-            let combined = format!("{}\n\n{}", existing.trim_end(), hook_content);
-            fs::write(&hook_path, combined)?;
-            println!("{} appended to existing post-commit hook", "ok".green());
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755))?;
-            }
-            return Ok(());
-        }
-    }
+    install_managed_hook(
+        &pre_commit_path,
+        "agentdiff pre-commit hook",
+        &pre_commit_content,
+    )?;
+    install_managed_hook(
+        &post_commit_path,
+        "agentdiff post-commit hook",
+        &post_commit_content,
+    )?;
 
-    fs::write(&hook_path, &hook_content)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&hook_path, fs::Permissions::from_mode(0o755))?;
-    }
     println!(
-        "{} installed post-commit hook at {}",
-        "ok".green(),
-        hook_path.display()
+        "{} installed git hooks (pre-commit, post-commit)",
+        "ok".green()
     );
     Ok(())
 }
 
+fn install_managed_hook(path: &Path, marker: &str, content: &str) -> Result<()> {
+    if path.exists() {
+        let existing = fs::read_to_string(path)?;
+        if existing.contains(marker) {
+            fs::write(path, content)?;
+        } else {
+            let combined = format!("{}\n\n{}", existing.trim_end(), content);
+            fs::write(path, combined)?;
+            println!("{} appended to existing {}", "ok".green(), path.display());
+        }
+    } else {
+        fs::write(path, content)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
+#[allow(dead_code)]
 fn step_configure_git_notes(repo_root: &Path) -> Result<()> {
     let set_pairs = [
         ("notes.rewrite.amend", "true"),
@@ -700,5 +747,10 @@ fn step_register_repo(repo_root: &Path, config: &mut Config) -> Result<()> {
     }
 
     fs::create_dir_all(Config::repo_session_dir(repo_root))?;
+    fs::create_dir_all(Config::repo_ledger_dir(repo_root))?;
+    let ledger = Config::repo_ledger_path(repo_root);
+    if !ledger.exists() {
+        fs::write(&ledger, "")?;
+    }
     Ok(())
 }

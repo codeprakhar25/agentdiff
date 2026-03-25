@@ -24,10 +24,16 @@ cp target/release/agentdiff ~/.cargo/bin/
 cd ~/your-project
 agentdiff init
 
+# Start MCP server (stdio) for agent integrations
+agentdiff-mcp
+
 # Make some AI-assisted edits, then commit
 
 # List all captured entries
 agentdiff list
+
+# Show one commit's full ledger details
+agentdiff show <sha>
 
 # See line-by-line blame for a file
 agentdiff blame src/main.rs
@@ -50,13 +56,17 @@ agentdiff report --format markdown
 | `agentdiff report` | Generate CI report (markdown or GitHub annotations) |
 | `agentdiff diff [<commit>]` | Show attribution changes in a commit |
 | `agentdiff log` | Show chronological history |
-| `agentdiff sync-notes` | Fetch `refs/notes/agentdiff` from origin |
+| `agentdiff show <sha>` | Show one ledger entry by commit SHA |
+| `agentdiff ledger repair` | Normalize and de-duplicate `.agentdiff/ledger.jsonl` |
+| `agentdiff ledger import-notes` | Import legacy `refs/notes/agentdiff` into ledger |
+| `agentdiff sync-notes` | Legacy: fetch `refs/notes/agentdiff` for migration |
 | `agentdiff config` | Manage configuration |
 
 ## How It Works
 
 1. **Hook Installation** — `agentdiff init` installs:
-   - Git post-commit hook to write compact attribution notes
+   - Git `pre-commit` hook to snapshot staged AI attribution context
+   - Git `post-commit` hook to append one commit-scoped ledger line
    - Claude Code PostToolUse hook
    - Cursor afterFileEdit hook
    - Codex notify hook
@@ -70,11 +80,12 @@ agentdiff report --format markdown
    - Windsurf → post_write_code hook fires on code write
    - OpenCode → plugin fires on tool.execute.after
    - Each capture writes to `<repo>/.git/agentdiff/session.jsonl`
+   - Optional MCP writes context to `<repo>/.git/agentdiff/pending.json`
 
 3. **Commit** — On `git commit`:
-   - Post-commit hook compacts buffered events
-   - Writes one JSON note to `refs/notes/agentdiff` attached to `HEAD`
-   - Leaves unmatched events buffered for the next commit
+   - Pre-commit hook writes `<repo>/.git/agentdiff/pending-ledger.json`
+   - Post-commit hook finalizes one line into `<repo>/.agentdiff/ledger.jsonl`
+   - Pending files are cleared after finalize
 
 4. **View** — Use CLI commands to inspect captured data
 
@@ -99,7 +110,77 @@ slug = "-home-user-project"
 - **Codex CLI** — via `notify` hook
 - **Windsurf** — via `post_write_code` hook
 - **OpenCode** — via `.opencode/plugins/agentdiff.ts`
+- **MCP context writer** — via `record-context.py` (writes `.git/agentdiff/pending.json`)
 - **Antigravity/batch agents** — via CLI (`capture-antigravity.py --prompt "..." --model "..."`)
+
+## MCP Server
+
+`agentdiff-mcp` is a real MCP stdio server.  
+Supported methods:
+- `initialize`
+- `tools/list`
+- `tools/call` for tool `record_context`
+
+`record_context` writes context to `<repo>/.git/agentdiff/pending.json`, which is consumed by `agentdiff` pre/post commit hooks and attached to the next ledger line.
+
+Example `record_context` arguments:
+```json
+{
+  "cwd": "/path/to/repo",
+  "agent": "codex",
+  "model_id": "gpt-5.4",
+  "session_id": "sess_abc123",
+  "prompt": "add auth middleware",
+  "files_read": ["src/auth.rs", "src/config.rs"],
+  "intent": "auth hardening",
+  "trust": 92,
+  "flags": ["security"]
+}
+```
+
+## End-to-End Testing
+
+### 1) Reinstall latest binaries and scripts
+```bash
+cargo install --path /home/prakh/agentdiff --force
+cd /path/to/your/repo
+agentdiff init
+```
+
+### 2) MCP flow test (commit should include prompt/model/session)
+```bash
+# In repo root
+agentdiff-mcp
+# In another terminal, send tools/call record_context via your MCP client
+# then make a small edit + git add + git commit
+
+agentdiff list
+agentdiff show HEAD
+```
+
+### 3) Hook-only fallback test (no MCP)
+```bash
+# Make an AI edit from Cursor/Codex/Windsurf/Claude, then commit
+agentdiff list
+agentdiff show HEAD
+```
+
+### 4) Cursor diagnostics (if entry is missing)
+```bash
+export AGENTDIFF_DEBUG=1
+# make one Cursor edit + commit
+tail -n 100 ~/.agentdiff/logs/capture-cursor.log
+tail -n 50 .git/agentdiff/session.jsonl
+tail -n 20 .agentdiff/ledger.jsonl
+```
+
+### 5) Edge cases to validate
+- Empty or malformed hook payloads should not crash capture scripts.
+- `afterTabFileEdit` events should still attribute file/line/model without prompt.
+- Events with Windows-style backslash paths should resolve to repo-local paths.
+- If hook `cwd` is not repo (for example `~/.cursor`), file-path-based repo resolution should still write to `<repo>/.git/agentdiff/session.jsonl`.
+- Commits with no staged overlap against captured lines should fall back to `human`.
+- Duplicate finalize on same SHA should not append duplicate ledger rows.
 
 ## Output Formats
 
@@ -157,12 +238,20 @@ slug = "-home-user-project"
 │   ├── capture-codex.py
 │   ├── capture-windsurf.py
 │   ├── capture-opencode.py
+│   ├── prepare-ledger.py
+│   ├── finalize-ledger.py
+│   ├── record-context.py
 │   ├── capture-antigravity.py
-│   └── write-note.py
+│   └── write-note.py      ← legacy notes writer (migration only)
 └── spillover/            ← Optional no-repo event spillover
 
+<repo>/.agentdiff/
+└── ledger.jsonl          ← Canonical committed append-only attribution log
+
 <repo>/.git/agentdiff/
-└── session.jsonl         ← Uncommitted per-repo buffer
+├── session.jsonl         ← Uncommitted per-repo buffer from hooks/agents
+├── pending.json          ← Ephemeral MCP context handoff
+└── pending-ledger.json   ← Pre-commit snapshot finalized in post-commit
 
 <repo>/.windsurf/
 └── hooks.json            ← Windsurf repo-level hook config
@@ -170,8 +259,8 @@ slug = "-home-user-project"
 <repo>/.opencode/plugins/
 └── agentdiff.ts          ← OpenCode repo-level plugin
 
-git refs:
-└── refs/notes/agentdiff  ← Canonical committed attribution notes
+git refs (legacy migration source):
+└── refs/notes/agentdiff
 ```
 
 ## Requirements

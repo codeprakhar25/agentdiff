@@ -1,0 +1,27 @@
+.gitignore
+  b8eb1cc478a3826a 1
+Cargo.toml
+  b8eb1cc478a3826a 1-28
+README.md
+  b8eb1cc478a3826a 1-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.18",
+  "base_commit_sha": "76d5d45e6a46c913526eed521262511f2135dcab",
+  "prompts": {
+    "b8eb1cc478a3826a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d2455-9b8c-7da1-b312-a8e42461581d",
+        "model": "gpt-5.3-codex"
+      },
+      "human_author": "Prakhar Khatri <prakharkhatri123@gmail.com>",
+      "messages": [],
+      "total_additions": 230,
+      "total_deletions": 16,
+      "accepted_lines": 214,
+      "overriden_lines": 0
+    }
+  }
+}

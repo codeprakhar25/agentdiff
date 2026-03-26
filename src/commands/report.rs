@@ -24,6 +24,7 @@ pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
         entries
     };
 
+    // TODO: filter by agent/model if requested
     match args.format {
         crate::cli::ReportFormat::Markdown => {
             render_markdown(&filtered, &store.repo_root)?;

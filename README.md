@@ -48,8 +48,10 @@ agentdiff blame src/main.rs
 # View statistics
 agentdiff stats
 
-# Generate CI report
+# Generate CI report (stdout, or --out-md / --out-annotations for files)
 agentdiff report --format markdown
+agentdiff report --format annotations --out-annotations annotations.json
+# optional filters: --since RFC3339 --agent substring --model substring
 ```
 
 ## Commands
@@ -60,7 +62,7 @@ agentdiff report --format markdown
 | `agentdiff list` | List all captured attribution entries |
 | `agentdiff blame <file>` | Show line-level attribution (like git-blame) |
 | `agentdiff stats` | Show aggregate statistics by agent/file/model |
-| `agentdiff report` | Generate CI report (markdown or GitHub annotations) |
+| `agentdiff report` | CI report: markdown and/or GitHub-style annotations (`--out-md`, `--out-annotations`, `--agent`, `--model`, `--since`) |
 | `agentdiff diff [<commit>]` | Show attribution changes in a commit |
 | `agentdiff log` | Show chronological history |
 | `agentdiff show <sha>` | Show one ledger entry by commit SHA |

@@ -12,10 +12,6 @@ pub struct Cli {
     #[arg(short = 'C', long, global = true)]
     pub repo: Option<std::path::PathBuf>,
 
-    /// Output format: text (default) | json | markdown
-    #[arg(short, long, global = true, default_value = "text")]
-    pub format: OutputFormat,
-
     #[command(subcommand)]
     pub command: Command,
 }
@@ -78,7 +74,7 @@ pub struct InitArgs {
     #[arg(long)]
     pub no_opencode: bool,
 
-    /// Skip git post-commit hook setup
+    /// Skip git pre-commit and post-commit hook setup
     #[arg(long)]
     pub no_git_hook: bool,
 
@@ -148,6 +144,14 @@ pub struct ReportArgs {
     /// Only include entries after this ISO timestamp
     #[arg(long)]
     pub since: Option<String>,
+
+    /// Only include entries whose agent name contains this substring
+    #[arg(long)]
+    pub agent: Option<String>,
+
+    /// Only include entries whose model name contains this substring
+    #[arg(long)]
+    pub model: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -211,13 +215,6 @@ pub enum ConfigAction {
     Get { key: String },
     /// Add a repo to the config
     AddRepo { path: std::path::PathBuf },
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum OutputFormat {
-    Text,
-    Json,
-    Markdown,
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]

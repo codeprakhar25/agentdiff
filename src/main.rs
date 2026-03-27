@@ -47,8 +47,10 @@ fn main() -> anyhow::Result<()> {
                 args.no_claude,
                 args.no_cursor,
                 args.no_codex,
+                args.no_antigravity,
                 args.no_windsurf,
                 args.no_opencode,
+                args.no_copilot,
                 args.no_git_hook,
                 args.migrate,
             )

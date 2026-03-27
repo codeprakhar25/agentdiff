@@ -153,7 +153,13 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
 
-    event_name = first(payload, "hook_event_name", "hookEventName", "event_name", "event", default="")
+    # Windsurf sends event name as "agent_action_name" (not "hook_event_name")
+    event_name = first(
+        payload,
+        "agent_action_name",        # Windsurf actual field
+        "hook_event_name", "hookEventName", "event_name", "event",
+        default="",
+    )
     trajectory_id = first(payload, "trajectory_id", "trajectoryId", "session_id", "sessionId", default="unknown")
     prompt = first(payload, "prompt", "user_prompt", "userPrompt", default="")
 
@@ -164,23 +170,45 @@ def main() -> int:
         return 0
 
     if event_name != "post_write_code":
+        debug_log(f"skip: unexpected event_name={event_name!r}")
         return 0
 
-    cwd = first(payload, "cwd", "workspace", "workspace_path", "workspacePath", default=os.getcwd())
+    # Windsurf nests file info under "tool_info"; fall back to top-level for
+    # any future/alternate payload shapes.
+    tool_info = payload.get("tool_info") or {}
+
+    abs_file = first(tool_info, "file_path", "filePath", "filepath", "path", default="") \
+        or first(payload, "file_path", "filePath", "filepath", "path", default="")
+    if not abs_file:
+        debug_log("skip: missing file_path in tool_info and payload")
+        return 0
+
+    # Derive cwd from the file path (Windsurf omits cwd in post_write_code).
+    cwd = first(payload, "cwd", "workspace", "workspace_path", "workspacePath",
+                default=os.path.dirname(abs_file) or os.getcwd())
     repo_root = find_repo_root(cwd)
     if not os.path.exists(os.path.join(repo_root, ".git")):
-        return 0
+        # Try deriving repo from the file itself
+        repo_root = find_repo_root(os.path.dirname(abs_file))
+        if not os.path.exists(os.path.join(repo_root, ".git")):
+            debug_log(f"skip: no git repo found for cwd={cwd!r}")
+            return 0
 
-    abs_file = first(payload, "filepath", "file_path", "filePath", "path", default="")
-    if not abs_file:
-        return 0
     if not os.path.isabs(abs_file):
         abs_file = os.path.abspath(os.path.join(cwd, abs_file))
     if not abs_file.startswith(repo_root):
+        debug_log(f"skip: file outside repo abs_file={abs_file!r} repo_root={repo_root!r}")
         return 0
 
-    old_str = first(payload, "old_str", "old_string", "oldString", default="")
-    new_str = first(payload, "new_str", "new_string", "newString", default="")
+    # Edits are under tool_info.edits[]; fall back to top-level old_str/new_str.
+    edits = tool_info.get("edits") or []
+    if edits and isinstance(edits, list):
+        first_edit = edits[0] if isinstance(edits[0], dict) else {}
+        old_str = first(first_edit, "old_string", "oldString", "old_str", "old", default="")
+        new_str = first(first_edit, "new_string", "newString", "new_str", "new", default="")
+    else:
+        old_str = first(payload, "old_str", "old_string", "oldString", default="")
+        new_str = first(payload, "new_str", "new_string", "newString", default="")
     lines = compute_line_range(abs_file, str(old_str), str(new_str))
 
     model = first(payload, "model", "model_name", "modelName", default="")

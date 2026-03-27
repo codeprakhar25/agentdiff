@@ -1,0 +1,19 @@
+{
+  "name": "agentdiff-copilot",
+  "displayName": "agentdiff Copilot",
+  "description": "Track GitHub Copilot code contributions for agentdiff audit trail",
+  "version": "0.1.0",
+  "publisher": "agentdiff",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "agentdiff.captureNow",
+        "title": "agentdiff: Capture Copilot edits for current file"
+      }
+    ]
+  }
+}

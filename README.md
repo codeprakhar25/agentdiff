@@ -79,15 +79,19 @@ agentdiff report --format annotations --out-annotations annotations.json
    - Claude Code PostToolUse hook
    - Cursor afterFileEdit hook
    - Codex notify hook
+   - Gemini/Antigravity BeforeTool/AfterTool hooks
    - Windsurf repo-level hooks
    - OpenCode repo-level plugin
+   - VS Code Copilot extension (`~/.vscode/extensions/agentdiff-copilot-0.1.0/`)
 
 2. **Capture** — When you use AI tools:
    - Claude Code → PostToolUse hook fires on Edit/Write/MultiEdit
    - Cursor → afterFileEdit/afterTabFileEdit hooks fire
    - Codex → notify hook fires on turn completion
+   - Gemini/Antigravity → BeforeTool/AfterTool hooks fire on write_file/replace
    - Windsurf → post_write_code hook fires on code write
    - OpenCode → plugin fires on tool.execute.after
+   - GitHub Copilot → VS Code extension captures inline completions and chat edits on save
    - Each capture writes to `<repo>/.git/agentdiff/session.jsonl`
    - Optional MCP writes context to `<repo>/.git/agentdiff/pending.json`
 
@@ -125,10 +129,12 @@ agentdiff init
 - **Claude Code** — via PostToolUse hook
 - **Cursor** — via afterFileEdit/afterTabFileEdit hooks
 - **Codex CLI** — via `notify` hook
+- **Gemini/Antigravity** — via `~/.gemini/settings.json` hooks (`write_file|replace`)
 - **Windsurf** — via `post_write_code` hook
 - **OpenCode** — via `.opencode/plugins/agentdiff.ts`
+- **GitHub Copilot (VS Code)** — via VS Code extension installed to `~/.vscode/extensions/`
 - **MCP context writer** — via `record-context.py` (writes `.git/agentdiff/pending.json`)
-- **Antigravity/batch agents** — via CLI (`capture-antigravity.py --prompt "..." --model "..."`)
+- **Manual batch fallback** — `capture-antigravity.py --prompt "..." --model "..."`
 
 ## MCP Server
 
@@ -211,6 +217,16 @@ tail -n 50 .git/agentdiff/session.jsonl
 tail -n 20 .agentdiff/ledger.jsonl
 ```
 
+### 4b) Codex / Gemini diagnostics (if entry is missing)
+```bash
+export AGENTDIFF_DEBUG=1
+# make one edit in Codex or Gemini, then commit
+tail -n 100 ~/.agentdiff/logs/codex-notify-fired.log
+tail -n 100 ~/.agentdiff/logs/capture-codex.log
+tail -n 50 .git/agentdiff/session.jsonl
+tail -n 20 .agentdiff/ledger.jsonl
+```
+
 ### 5) Edge cases to validate
 - Empty or malformed hook payloads should not crash capture scripts.
 - `afterTabFileEdit` events should still attribute file/line/model without prompt.
@@ -273,6 +289,24 @@ Tagging `v*` triggers release workflow:
 - **Code review** — Identify AI-authored code requiring extra scrutiny
 - **Attribution** — Track prompts driving major changes
 
+## VS Code Copilot Extension
+
+`agentdiff init` installs a plain-JavaScript VS Code extension directly into
+`~/.vscode/extensions/agentdiff-copilot-0.1.0/`. No `npm install` or build step
+is needed. **Restart VS Code** after running `agentdiff init` to activate it.
+
+The extension:
+- Detects GitHub Copilot inline completions (multi-character/multi-line insertions)
+- Flushes captured lines to `session.jsonl` on file save
+- Exposes command **"agentdiff: Capture Copilot edits for current file"** for manual capture
+
+To skip Copilot setup: `agentdiff init --no-copilot`
+To skip Gemini/Antigravity setup: `agentdiff init --no-antigravity`
+
+> **Note:** The extension uses a heuristic — insertions of ≥10 characters or multiple
+> lines while Copilot is active are attributed to Copilot. Short single-character
+> insertions are treated as manual typing.
+
 ## Architecture
 
 ```
@@ -284,12 +318,18 @@ Tagging `v*` triggers release workflow:
 │   ├── capture-codex.py
 │   ├── capture-windsurf.py
 │   ├── capture-opencode.py
+│   ├── capture-copilot.py
 │   ├── prepare-ledger.py
 │   ├── finalize-ledger.py
 │   ├── record-context.py
 │   ├── capture-antigravity.py
 │   └── write-note.py      ← legacy notes writer (migration only)
 └── spillover/            ← Optional no-repo event spillover
+
+~/.vscode/extensions/
+└── agentdiff-copilot-0.1.0/
+    ├── package.json      ← VS Code extension manifest
+    └── extension.js      ← Copilot capture logic (plain JS, no build needed)
 
 <repo>/.agentdiff/
 └── ledger.jsonl          ← Canonical committed append-only attribution log

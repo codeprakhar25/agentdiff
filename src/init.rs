@@ -10,6 +10,11 @@ const WINDSURF_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-windsurf.
 const OPENCODE_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-opencode.py");
 const OPENCODE_PLUGIN_TEMPLATE: &str = include_str!("../scripts/opencode-agentdiff.ts");
 const ANTIGRAVITY_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-antigravity.py");
+const COPILOT_CAPTURE_SCRIPT: &str = include_str!("../scripts/capture-copilot.py");
+const COPILOT_EXT_PACKAGE_JSON: &str =
+    include_str!("../scripts/vscode-extension/package.json");
+const COPILOT_EXT_JS_TEMPLATE: &str =
+    include_str!("../scripts/vscode-extension/extension.js");
 const PREPARE_LEDGER_SCRIPT: &str = include_str!("../scripts/prepare-ledger.py");
 const FINALIZE_LEDGER_SCRIPT: &str = include_str!("../scripts/finalize-ledger.py");
 const RECORD_CONTEXT_SCRIPT: &str = include_str!("../scripts/record-context.py");
@@ -21,8 +26,10 @@ pub fn run_init(
     no_claude: bool,
     no_cursor: bool,
     no_codex: bool,
+    no_antigravity: bool,
     no_windsurf: bool,
     no_opencode: bool,
+    no_copilot: bool,
     no_git_hook: bool,
     migrate: bool,
 ) -> Result<()> {
@@ -56,20 +63,30 @@ pub fn run_init(
         step_configure_codex(config)?;
     }
 
-    // Step 7 — configure Windsurf repo-level .windsurf/hooks.json
+    // Step 7 — configure Gemini / Antigravity hooks
+    if !no_antigravity {
+        step_configure_antigravity(config)?;
+    }
+
+    // Step 8 — configure Windsurf repo-level .windsurf/hooks.json
     if !no_windsurf {
         step_configure_windsurf(repo_root, config)?;
     }
 
-    // Step 8 — configure OpenCode repo-level plugin
+    // Step 9 — configure OpenCode repo-level plugin
     if !no_opencode {
         step_configure_opencode(repo_root, config)?;
     }
 
-    // Step 9 — register repo in global config
+    // Step 10 — install VS Code Copilot extension
+    if !no_copilot {
+        step_configure_copilot(config)?;
+    }
+
+    // Step 11 — register repo in global config
     step_register_repo(repo_root, config)?;
 
-    // Step 10 — save updated config
+    // Step 12 — save updated config
     config.save()?;
     println!(
         "{} Config written to {}",
@@ -111,6 +128,7 @@ fn step_install_scripts(config: &Config) -> Result<()> {
         ("capture-windsurf.py", WINDSURF_CAPTURE_SCRIPT),
         ("capture-opencode.py", OPENCODE_CAPTURE_SCRIPT),
         ("capture-antigravity.py", ANTIGRAVITY_CAPTURE_SCRIPT),
+        ("capture-copilot.py", COPILOT_CAPTURE_SCRIPT),
         ("prepare-ledger.py", PREPARE_LEDGER_SCRIPT),
         ("finalize-ledger.py", FINALIZE_LEDGER_SCRIPT),
         ("record-context.py", RECORD_CONTEXT_SCRIPT),
@@ -605,6 +623,18 @@ fn step_configure_codex(config: &Config) -> Result<()> {
         changed = true;
     }
 
+    // Ensure Codex hooks are enabled so notify is actually emitted.
+    let features = table
+        .entry("features".to_string())
+        .or_insert(toml::Value::Table(Default::default()));
+    let features_table = features
+        .as_table_mut()
+        .context("~/.codex/config.toml [features] must be a table")?;
+    if features_table.get("codex_hooks").and_then(|v| v.as_bool()) != Some(true) {
+        features_table.insert("codex_hooks".to_string(), toml::Value::Boolean(true));
+        changed = true;
+    }
+
     if changed {
         fs::create_dir_all(&codex_dir)?;
         fs::write(&config_path, toml::to_string_pretty(&cfg_val)?)?;
@@ -615,6 +645,146 @@ fn step_configure_codex(config: &Config) -> Result<()> {
         );
     } else {
         println!("{} Codex notify hook already present", "--".dimmed());
+    }
+    Ok(())
+}
+
+fn step_configure_antigravity(config: &Config) -> Result<()> {
+    let gemini_dir = dirs::home_dir().unwrap().join(".gemini");
+    let settings_path = gemini_dir.join("settings.json");
+    if !gemini_dir.exists() && !settings_path.exists() {
+        println!(
+            "{} ~/.gemini not found — skipping Gemini/Antigravity setup",
+            "!".yellow()
+        );
+        return Ok(());
+    }
+
+    let capture_script = config.scripts_root().join("capture-antigravity.py");
+    let capture_cmd = format!("python3 {}", capture_script.display());
+
+    let raw = fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
+    let mut cfg: serde_json::Value =
+        serde_json::from_str(&raw).context("parsing ~/.gemini/settings.json")?;
+    let root = cfg
+        .as_object_mut()
+        .context("~/.gemini/settings.json root must be an object")?;
+    let hooks = root
+        .entry("hooks")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .context("~/.gemini/settings.json hooks must be an object")?;
+
+    let mut changed = false;
+    let events = ["BeforeTool", "AfterTool"];
+
+    for event in events {
+        let arr = hooks
+            .entry(event)
+            .or_insert(serde_json::json!([]))
+            .as_array_mut()
+            .context("Gemini hook event must be an array")?;
+
+        let mut found_matcher_idx: Option<usize> = None;
+        for (idx, item) in arr.iter().enumerate() {
+            let matcher = item.get("matcher").and_then(|m| m.as_str()).unwrap_or("");
+            if matcher == "write_file|replace" {
+                found_matcher_idx = Some(idx);
+                break;
+            }
+        }
+
+        if found_matcher_idx.is_none() {
+            arr.push(serde_json::json!({
+                "matcher": "write_file|replace",
+                "hooks": [{
+                    "type": "command",
+                    "command": capture_cmd
+                }]
+            }));
+            changed = true;
+            continue;
+        }
+
+        if let Some(idx) = found_matcher_idx {
+            let Some(obj) = arr[idx].as_object_mut() else {
+                continue;
+            };
+            let inner = obj
+                .entry("hooks")
+                .or_insert(serde_json::json!([]))
+                .as_array_mut()
+                .context("Gemini hooks entry must contain hooks array")?;
+
+            let mut found_cmd = false;
+            for hook in inner.iter_mut() {
+                let Some(cmd_val) = hook.get_mut("command") else {
+                    continue;
+                };
+                let Some(cmd) = cmd_val.as_str() else {
+                    continue;
+                };
+                if cmd.contains("capture-antigravity.py") {
+                    found_cmd = true;
+                    if cmd != capture_cmd {
+                        *cmd_val = serde_json::Value::String(capture_cmd.clone());
+                        changed = true;
+                    }
+                }
+            }
+
+            if !found_cmd {
+                inner.push(serde_json::json!({
+                    "type": "command",
+                    "command": capture_cmd
+                }));
+                changed = true;
+            }
+
+            let mut seen = std::collections::HashSet::new();
+            inner.retain(|hook| {
+                let Some(cmd) = hook.get("command").and_then(|c| c.as_str()) else {
+                    return true;
+                };
+                if seen.contains(cmd) {
+                    changed = true;
+                    false
+                } else {
+                    seen.insert(cmd.to_string());
+                    true
+                }
+            });
+        }
+    }
+
+    let tools_obj = root
+        .entry("tools")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .context("~/.gemini/settings.json tools must be an object")?;
+    if tools_obj
+        .get("enableHooks")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        != true
+    {
+        tools_obj.insert("enableHooks".to_string(), serde_json::Value::Bool(true));
+        changed = true;
+    }
+
+    if changed {
+        fs::create_dir_all(&gemini_dir)?;
+        fs::write(&settings_path, serde_json::to_string_pretty(&cfg)?)?;
+        println!(
+            "{} Gemini/Antigravity hooks configured in {}",
+            "ok".green(),
+            settings_path.display()
+        );
+    } else {
+        println!(
+            "{} Gemini/Antigravity hooks already present",
+            "--".dimmed()
+        );
     }
     Ok(())
 }
@@ -748,6 +918,109 @@ fn step_configure_opencode(repo_root: &Path, config: &Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn step_configure_copilot(config: &Config) -> Result<()> {
+    let capture_script = config.scripts_root().join("capture-copilot.py");
+    let ext_js = COPILOT_EXT_JS_TEMPLATE.replace(
+        "__AGENTDIFF_CAPTURE_COPILOT__",
+        &capture_script.to_string_lossy(),
+    );
+
+    // VS Code loads extensions placed directly in ~/.vscode/extensions/<name>-<version>/
+    // This works on Linux, macOS, and Windows without any build step or vsce.
+    let mut installed_any = false;
+    for vscode_dir in vscode_extension_dirs() {
+        let ext_dir = vscode_dir.join("agentdiff-copilot-0.1.0");
+        if let Err(e) = fs::create_dir_all(&ext_dir) {
+            println!(
+                "{} cannot create {}: {}",
+                "!".yellow(),
+                ext_dir.display(),
+                e
+            );
+            continue;
+        }
+
+        let pkg_path = ext_dir.join("package.json");
+        let js_path = ext_dir.join("extension.js");
+
+        let existing_pkg = fs::read_to_string(&pkg_path).unwrap_or_default();
+        let existing_js = fs::read_to_string(&js_path).unwrap_or_default();
+
+        let mut changed = false;
+        if existing_pkg != COPILOT_EXT_PACKAGE_JSON {
+            fs::write(&pkg_path, COPILOT_EXT_PACKAGE_JSON)
+                .with_context(|| format!("writing {}", pkg_path.display()))?;
+            changed = true;
+        }
+        if existing_js != ext_js {
+            fs::write(&js_path, &ext_js)
+                .with_context(|| format!("writing {}", js_path.display()))?;
+            changed = true;
+        }
+
+        if changed {
+            println!(
+                "{} VS Code Copilot extension installed in {}",
+                "ok".green(),
+                ext_dir.display()
+            );
+            installed_any = true;
+        } else {
+            println!(
+                "{} VS Code Copilot extension already up-to-date in {}",
+                "--".dimmed(),
+                ext_dir.display()
+            );
+            installed_any = true;
+        }
+    }
+
+    if !installed_any {
+        println!(
+            "{} VS Code extensions directory not found — skipping Copilot setup",
+            "!".yellow()
+        );
+        println!("    Checked: ~/.vscode-server/extensions, ~/.vscode/extensions, ~/.vscode-insiders/extensions");
+        println!(
+            "    To install manually: mkdir -p ~/.vscode-server/extensions/agentdiff-copilot-0.1.0 && cp {script_dir}/vscode-extension/* ~/.vscode-server/extensions/agentdiff-copilot-0.1.0/",
+            script_dir = capture_script.parent().unwrap_or(capture_script.as_path()).display()
+        );
+    } else {
+        println!("{} Restart VS Code to activate the agentdiff Copilot extension", "!".yellow());
+    }
+
+    Ok(())
+}
+
+/// Returns VS Code extension directories that exist on this machine.
+///
+/// Priority order:
+/// 1. `~/.vscode-server/extensions`          — WSL2 / Remote-SSH extension host (Linux side).
+///    Extensions here run inside WSL, so `python3` and file paths resolve correctly.
+/// 2. `~/.vscode-server-insiders/extensions` — VS Code Insiders server variant.
+/// 3. `~/.vscode/extensions`                 — VS Code stable on Linux / macOS / Windows.
+/// 4. `~/.vscode-insiders/extensions`        — VS Code Insiders on Linux / macOS.
+fn vscode_extension_dirs() -> Vec<std::path::PathBuf> {
+    let home = match dirs::home_dir() {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+
+    let candidates = vec![
+        // WSL2 / Remote-SSH: server-side extension host (highest priority on Linux)
+        home.join(".vscode-server").join("extensions"),
+        home.join(".vscode-server-insiders").join("extensions"),
+        // Regular VS Code on Linux / macOS / Windows
+        home.join(".vscode").join("extensions"),
+        home.join(".vscode-insiders").join("extensions"),
+    ];
+
+    candidates
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect()
 }
 
 fn toml_array_to_strings(v: &toml::Value) -> Option<Vec<String>> {

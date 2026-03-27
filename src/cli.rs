@@ -66,6 +66,10 @@ pub struct InitArgs {
     #[arg(long)]
     pub no_codex: bool,
 
+    /// Skip Gemini/Antigravity hook setup
+    #[arg(long)]
+    pub no_antigravity: bool,
+
     /// Skip Windsurf hook setup
     #[arg(long)]
     pub no_windsurf: bool,
@@ -73,6 +77,10 @@ pub struct InitArgs {
     /// Skip OpenCode hook setup
     #[arg(long)]
     pub no_opencode: bool,
+
+    /// Skip VS Code Copilot extension setup
+    #[arg(long)]
+    pub no_copilot: bool,
 
     /// Skip git pre-commit and post-commit hook setup
     #[arg(long)]

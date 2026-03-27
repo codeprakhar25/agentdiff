@@ -1,0 +1,43 @@
+src/init.rs
+  4830ebf93be5f6c1 13-17,32,82-86,89,131,923-1025
+scripts/capture-windsurf.py
+  4830ebf93be5f6c1 156-162,173,176-178,180-181,183,185-196,200,203-211
+README.md
+  4830ebf93be5f6c1 85,94,135,292-303,305-309,321,329-332
+scripts/vscode-extension/extension.js
+  4830ebf93be5f6c1 1-167
+src/cli.rs
+  4830ebf93be5f6c1 81-84
+scripts/capture-antigravity.py
+  4830ebf93be5f6c1 10
+src/main.rs
+  4830ebf93be5f6c1 53
+scripts/opencode-agentdiff.ts
+  4830ebf93be5f6c1 11-13,23-56,82,109-117,121,126-127,133
+scripts/capture-copilot.py
+  4830ebf93be5f6c1 1-131
+scripts/vscode-extension/package.json
+  4830ebf93be5f6c1 1-19
+scripts/capture-codex.py
+  4830ebf93be5f6c1 118-119,123,234-241,243-329,352-389,426-433,450-451,458-470,484-485,490-497,503-505,520,539-541,554,557,563
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.19",
+  "base_commit_sha": "94be020e1ce876039d76cdcd35a1602f1e2c5773",
+  "prompts": {
+    "4830ebf93be5f6c1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5967550d-43a0-40dd-bfcd-7b489de41699",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "Prakhar Khatri <prakharkhatri123@gmail.com>",
+      "messages": [],
+      "total_additions": 775,
+      "total_deletions": 65,
+      "accepted_lines": 734,
+      "overriden_lines": 16
+    }
+  }
+}

@@ -16,16 +16,20 @@ fn main() -> anyhow::Result<()> {
 
     let config = Config::load().context("loading config")?;
 
+    // Commands that don't require a git repository.
+    let no_repo_needed = matches!(
+        &cli.command,
+        Command::Config(_) | Command::Configure(_)
+    );
+
     // Resolve repo root
     let repo_root = if let Some(ref explicit) = cli.repo {
         explicit.clone()
     } else {
-        // Try to find git repo, fall back to cwd for non-repo commands
         match util::find_repo_root() {
             Ok(root) => root,
             Err(_) => {
-                // Config commands can run outside a git repo.
-                if matches!(&cli.command, Command::Config(_)) {
+                if no_repo_needed {
                     std::env::current_dir()?
                 } else {
                     return Err(anyhow::anyhow!(
@@ -39,10 +43,9 @@ fn main() -> anyhow::Result<()> {
     let store = store::Store::new(repo_root.clone(), config.clone());
 
     match cli.command {
-        Command::Init(args) => {
+        Command::Configure(args) => {
             let mut cfg = config;
-            init::run_init(
-                &repo_root,
+            init::run_configure(
                 &mut cfg,
                 args.no_claude,
                 args.no_cursor,
@@ -51,9 +54,11 @@ fn main() -> anyhow::Result<()> {
                 args.no_windsurf,
                 args.no_opencode,
                 args.no_copilot,
-                args.no_git_hook,
-                args.migrate,
             )
+        }
+        Command::Init(args) => {
+            let mut cfg = config;
+            init::run_init(&repo_root, &mut cfg, args.no_git_hook, args.migrate)
         }
         Command::List(args) => commands::list::run(&store, &args),
         Command::Blame(args) => commands::blame::run(&store, &args),

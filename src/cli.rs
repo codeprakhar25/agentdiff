@@ -18,7 +18,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Initialize agentdiff in this repository (install hooks, configure agents)
+    /// Configure global agent hooks (Claude, Cursor, Codex, Windsurf, OpenCode, Copilot) — run once per machine
+    Configure(ConfigureArgs),
+
+    /// Initialize agentdiff in this repository (install git hooks, create ledger)
     Init(InitArgs),
 
     /// List all captured attribution entries
@@ -53,7 +56,7 @@ pub enum Command {
 }
 
 #[derive(Args, Debug)]
-pub struct InitArgs {
+pub struct ConfigureArgs {
     /// Skip Claude Code hook setup
     #[arg(long)]
     pub no_claude: bool,
@@ -81,7 +84,10 @@ pub struct InitArgs {
     /// Skip VS Code Copilot extension setup
     #[arg(long)]
     pub no_copilot: bool,
+}
 
+#[derive(Args, Debug)]
+pub struct InitArgs {
     /// Skip git pre-commit and post-commit hook setup
     #[arg(long)]
     pub no_git_hook: bool,

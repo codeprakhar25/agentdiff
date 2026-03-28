@@ -20,8 +20,8 @@ const FINALIZE_LEDGER_SCRIPT: &str = include_str!("../scripts/finalize-ledger.py
 const RECORD_CONTEXT_SCRIPT: &str = include_str!("../scripts/record-context.py");
 const WRITE_NOTE_SCRIPT: &str = include_str!("../scripts/write-note.py");
 
-pub fn run_init(
-    repo_root: &Path,
+/// Configure global agent hooks — run once per machine, no git repo required.
+pub fn run_configure(
     config: &mut Config,
     no_claude: bool,
     no_cursor: bool,
@@ -30,12 +30,12 @@ pub fn run_init(
     no_windsurf: bool,
     no_opencode: bool,
     no_copilot: bool,
-    no_git_hook: bool,
-    migrate: bool,
 ) -> Result<()> {
-    println!("{}", "agentdiff init".bold().cyan());
-    println!("Repo: {}", repo_root.display());
+    println!("{}", "agentdiff configure".bold().cyan());
     println!();
+
+    // Check Python 3 availability — capture scripts require it.
+    check_python3()?;
 
     // Step 1 — create global dirs
     step_create_dirs(config)?;
@@ -43,50 +43,90 @@ pub fn run_init(
     // Step 2 — install Python scripts into ~/.agentdiff/scripts/
     step_install_scripts(config)?;
 
-    // Step 3 — install git hooks
-    if !no_git_hook {
-        step_install_git_hook(repo_root, config)?;
-    }
-
-    // Step 4 — configure Claude Code ~/.claude/settings.json
+    // Step 3 — configure Claude Code ~/.claude/settings.json
     if !no_claude {
         step_configure_claude(config)?;
     }
 
-    // Step 5 — configure Cursor ~/.cursor/hooks.json
+    // Step 4 — configure Cursor ~/.cursor/hooks.json
     if !no_cursor {
         step_configure_cursor(config)?;
     }
 
-    // Step 6 — configure Codex ~/.codex/config.toml notify hook
+    // Step 5 — configure Codex ~/.codex/config.toml notify hook
     if !no_codex {
         step_configure_codex(config)?;
     }
 
-    // Step 7 — configure Gemini / Antigravity hooks
+    // Step 6 — configure Gemini / Antigravity hooks
     if !no_antigravity {
         step_configure_antigravity(config)?;
     }
 
-    // Step 8 — configure Windsurf repo-level .windsurf/hooks.json
+    // Step 7 — configure Windsurf globally (~/.codeium/windsurf/hooks.json)
     if !no_windsurf {
-        step_configure_windsurf(repo_root, config)?;
+        step_configure_windsurf(config)?;
     }
 
-    // Step 9 — configure OpenCode repo-level plugin
+    // Step 8 — configure OpenCode globally (~/.config/opencode/plugins/)
     if !no_opencode {
-        step_configure_opencode(repo_root, config)?;
+        step_configure_opencode(config)?;
     }
 
-    // Step 10 — install VS Code Copilot extension
+    // Step 9 — install VS Code Copilot extension
     if !no_copilot {
         step_configure_copilot(config)?;
     }
 
-    // Step 11 — register repo in global config
+    // Save updated config
+    config.save()?;
+    println!(
+        "{} Config written to {}",
+        "ok".green(),
+        Config::config_path().display()
+    );
+
+    println!();
+    println!("{}", "agentdiff configure complete.".bold().green());
+    println!(
+        "{}",
+        "Run 'agentdiff init' inside each repo you want to track.".dimmed()
+    );
+    Ok(())
+}
+
+/// Initialize agentdiff in this repository — installs git hooks and creates the ledger.
+/// Run `agentdiff configure` first to set up global agent hooks.
+pub fn run_init(
+    repo_root: &Path,
+    config: &mut Config,
+    no_git_hook: bool,
+    migrate: bool,
+) -> Result<()> {
+    println!("{}", "agentdiff init".bold().cyan());
+    println!("Repo: {}", repo_root.display());
+    println!();
+
+    // Warn if configure hasn't been run yet (scripts dir empty or missing).
+    let scripts_dir = config.scripts_root();
+    let capture_claude = scripts_dir.join("capture-claude.py");
+    if !capture_claude.exists() {
+        println!(
+            "{} Agent hooks not configured yet. Run 'agentdiff configure' first to set up global hooks.",
+            "!".yellow()
+        );
+        println!();
+    }
+
+    // Step 1 — install git hooks
+    if !no_git_hook {
+        step_install_git_hook(repo_root, config)?;
+    }
+
+    // Step 2 — register repo in global config and create ledger/session dirs
     step_register_repo(repo_root, config)?;
 
-    // Step 12 — save updated config
+    // Step 3 — save updated config
     config.save()?;
     println!(
         "{} Config written to {}",
@@ -105,6 +145,25 @@ pub fn run_init(
     println!();
     println!("{}", "agentdiff init complete.".bold().green());
     Ok(())
+}
+
+fn check_python3() -> Result<()> {
+    // On Windows, `python3` may not exist; `python` is the common name.
+    let python_cmd = if cfg!(windows) { "python" } else { "python3" };
+    let output = Command::new(python_cmd).arg("--version").output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let ver = String::from_utf8_lossy(&out.stdout);
+            let ver = ver.trim();
+            println!("{} {python_cmd} found: {ver}", "ok".green());
+            Ok(())
+        }
+        _ => Err(anyhow::anyhow!(
+            "{python_cmd} not found on PATH.\n\
+             agentdiff capture scripts require Python 3.\n\
+             Install Python 3 and ensure it is on your PATH, then re-run 'agentdiff configure'."
+        )),
+    }
 }
 
 fn step_create_dirs(config: &Config) -> Result<()> {
@@ -789,8 +848,14 @@ fn step_configure_antigravity(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn step_configure_windsurf(repo_root: &Path, config: &Config) -> Result<()> {
-    let hooks_path = repo_root.join(".windsurf").join("hooks.json");
+fn step_configure_windsurf(config: &Config) -> Result<()> {
+    // Use the Windsurf user-level global config (~/.codeium/windsurf/hooks.json).
+    // This applies to all repos without needing per-repo setup.
+    let hooks_path = dirs::home_dir()
+        .unwrap()
+        .join(".codeium")
+        .join("windsurf")
+        .join("hooks.json");
     let capture_script = config.scripts_root().join("capture-windsurf.py");
     let capture_cmd = format!("python3 {}", capture_script.display());
 
@@ -875,11 +940,16 @@ fn step_configure_windsurf(repo_root: &Path, config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn step_configure_opencode(repo_root: &Path, config: &Config) -> Result<()> {
-    let plugin_path = repo_root
-        .join(".opencode")
-        .join("plugins")
-        .join("agentdiff.ts");
+fn step_configure_opencode(config: &Config) -> Result<()> {
+    // Use the OpenCode global plugins directory (~/.config/opencode/plugins/).
+    // This applies to all repos without needing per-repo setup.
+    // dirs::config_dir() returns ~/.config on Linux, ~/Library/Application Support on macOS.
+    let plugins_dir = dirs::config_dir()
+        .unwrap_or_else(|| dirs::home_dir().unwrap().join(".config"))
+        .join("opencode")
+        .join("plugins");
+    let plugin_path = plugins_dir.join("agentdiff.ts");
+
     let capture_script = config.scripts_root().join("capture-opencode.py");
     let plugin_content = OPENCODE_PLUGIN_TEMPLATE.replace(
         "__AGENTDIFF_CAPTURE_OPENCODE__",
@@ -900,9 +970,7 @@ fn step_configure_opencode(repo_root: &Path, config: &Config) -> Result<()> {
     }
 
     if existing != plugin_content {
-        if let Some(parent) = plugin_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        fs::create_dir_all(&plugins_dir)?;
         fs::write(&plugin_path, plugin_content)?;
         println!(
             "{} OpenCode plugin configured in {}",

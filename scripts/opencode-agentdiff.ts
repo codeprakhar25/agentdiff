@@ -1,7 +1,7 @@
 /**
  * agentdiff plugin for OpenCode
  *
- * Managed by `agentdiff init`.
+ * Managed by `agentdiff configure`.
  */
 import type { Plugin } from "@opencode-ai/plugin"
 import { dirname } from "path"

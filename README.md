@@ -10,10 +10,10 @@ agentdiff tracks **who** (which AI agent) wrote **what** code in your repository
 
 ```bash
 # Install latest release (recommended)
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
 
 # Install a specific version
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash -s -- --version v0.1.0
 
 # Install from crate source
 cargo install --path ~/agentdiff
@@ -357,4 +357,6 @@ git refs (legacy migration source):
 
 ## License
 
-MIT
+Dual-licensed under:
+- MIT ([LICENSE-MIT](LICENSE-MIT))
+- Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE))

@@ -1,362 +1,384 @@
-# agentdiff
+# agentdiff — Know What Every AI Agent Wrote
 
-Audit and trace autonomous AI code contributions in git repositories.
+<p align="center">
+  <strong>Line-level attribution for AI-assisted code. Audit every agent, model, and prompt across your entire git history.</strong>
+</p>
 
-## What is agentdiff?
+<p align="center">
+  <a href="https://github.com/codeprakhar25/agentdiff/releases"><img src="https://img.shields.io/github/v/release/codeprakhar25/agentdiff?style=flat-square" alt="Latest release"></a>
+  <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=flat-square" alt="License"></a>
+  <a href="https://github.com/codeprakhar25/agentdiff/actions"><img src="https://img.shields.io/github/actions/workflow/status/codeprakhar25/agentdiff/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <img src="https://img.shields.io/badge/agents-7%2B-blueviolet?style=flat-square" alt="Agents supported">
+  <img src="https://img.shields.io/badge/built_with-Rust-orange?style=flat-square" alt="Built with Rust">
+</p>
 
-agentdiff tracks **who** (which AI agent) wrote **what** code in your repository. It captures the agent name, model, prompt, and line-level attribution for every AI-assisted edit — storing this metadata for audit trails, compliance, and accountability.
+---
 
-## Installation
+agentdiff hooks into every major AI coding agent — Claude Code, Cursor, Codex, Copilot, Windsurf, OpenCode, Gemini — and writes a permanent, commit-scoped attribution record to your repository. Each record captures the agent name, model, prompt excerpt, and exact line ranges. All of it queryable from the CLI, no server required.
+
+```
+agentdiff stats
+
+  Total lines tracked: 4,231
+
+  By Agent:
+    claude-code   2,741 (65%) ████████████████████
+    cursor          973 (23%) ███████
+    copilot         353  (8%) ███
+    human           164  (4%) █
+```
+
+---
+
+## Install
 
 ```bash
-# Install latest release (recommended)
 curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
+```
 
-# Install a specific version
+<details>
+<summary>Other install methods</summary>
+
+```bash
+# Specific version
 curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash -s -- --version v0.1.0
 
-# Install from crate source
-cargo install --path ~/agentdiff
-
-# Build release and copy manually
-cargo build --release
-cp target/release/agentdiff ~/.cargo/bin/
-cp target/release/agentdiff-mcp ~/.cargo/bin/
+# From source (requires Rust 1.85+)
+cargo install --git https://github.com/codeprakhar25/agentdiff agentdiff
 ```
+
+**Requirements:** Python 3.7+ on PATH, Git 2.20+
+
+</details>
+
+---
 
 ## Quick Start
 
 ```bash
-# Initialize tracking in a repository
+# 1. Configure global agent hooks — run once per machine
+agentdiff configure
+
+# 2. Initialize a repository
 cd ~/your-project
 agentdiff init
 
-# Start MCP server (stdio) for agent integrations
-agentdiff-mcp
+# 3. Work normally — make AI-assisted edits, then commit
+git add . && git commit -m "feat: add feature"
 
-# Make some AI-assisted edits, then commit
-
-# List all captured entries
+# 4. Inspect attribution
 agentdiff list
-
-# Show one commit's full ledger details
-agentdiff show <sha>
-
-# See line-by-line blame for a file
 agentdiff blame src/main.rs
-
-# View statistics
 agentdiff stats
-
-# Generate CI report (stdout, or --out-md / --out-annotations for files)
-agentdiff report --format markdown
-agentdiff report --format annotations --out-annotations annotations.json
-# optional filters: --since RFC3339 --agent substring --model substring
 ```
+
+That's it. From here every commit is attributed to whichever agent (or human) wrote it.
+
+---
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `agentdiff configure` | Install global agent hooks — run once per machine |
 | `agentdiff init` | Initialize tracking in current repository |
-| `agentdiff list` | List all captured attribution entries |
-| `agentdiff blame <file>` | Show line-level attribution (like git-blame) |
-| `agentdiff stats` | Show aggregate statistics by agent/file/model |
-| `agentdiff report` | CI report: markdown and/or GitHub-style annotations (`--out-md`, `--out-annotations`, `--agent`, `--model`, `--since`) |
-| `agentdiff diff [<commit>]` | Show attribution changes in a commit |
-| `agentdiff log` | Show chronological history |
-| `agentdiff show <sha>` | Show one ledger entry by commit SHA |
-| `agentdiff ledger repair` | Normalize and de-duplicate `.agentdiff/ledger.jsonl` |
-| `agentdiff ledger import-notes` | Import legacy `refs/notes/agentdiff` into ledger |
-| `agentdiff sync-notes` | Legacy: fetch `refs/notes/agentdiff` for migration |
-| `agentdiff config` | Manage configuration |
+| `agentdiff list` | List attribution entries |
+| `agentdiff blame <file>` | Line-level attribution, like `git blame` |
+| `agentdiff stats` | Aggregate stats by agent, model, file |
+| `agentdiff log` | Chronological AI contribution history |
+| `agentdiff diff [<sha>]` | Attribution diff for a commit or range |
+| `agentdiff show <sha>` | Full details for one commit |
+| `agentdiff report` | CI report in Markdown or GitHub annotations |
+| `agentdiff config` | Manage global configuration |
 
-## How It Works
+<details>
+<summary>Command flags and examples</summary>
 
-1. **Hook Installation** — `agentdiff init` installs:
-   - Git `pre-commit` hook to snapshot staged AI attribution context
-   - Git `post-commit` hook to append one commit-scoped ledger line
-   - Claude Code PostToolUse hook
-   - Cursor afterFileEdit hook
-   - Codex notify hook
-   - Gemini/Antigravity BeforeTool/AfterTool hooks
-   - Windsurf repo-level hooks
-   - OpenCode repo-level plugin
-   - VS Code Copilot extension (`~/.vscode/extensions/agentdiff-copilot-0.1.0/`)
-
-2. **Capture** — When you use AI tools:
-   - Claude Code → PostToolUse hook fires on Edit/Write/MultiEdit
-   - Cursor → afterFileEdit/afterTabFileEdit hooks fire
-   - Codex → notify hook fires on turn completion
-   - Gemini/Antigravity → BeforeTool/AfterTool hooks fire on write_file/replace
-   - Windsurf → post_write_code hook fires on code write
-   - OpenCode → plugin fires on tool.execute.after
-   - GitHub Copilot → VS Code extension captures inline completions and chat edits on save
-   - Each capture writes to `<repo>/.git/agentdiff/session.jsonl`
-   - Optional MCP writes context to `<repo>/.git/agentdiff/pending.json`
-
-3. **Commit** — On `git commit`:
-   - Pre-commit hook writes `<repo>/.git/agentdiff/pending-ledger.json`
-   - Post-commit hook finalizes one line into `<repo>/.agentdiff/ledger.jsonl`
-   - By default, post-commit auto-amends the commit to include ledger changes
-   - Pending files are cleared after finalize
-
-4. **View** — Use CLI commands to inspect captured data
-
-## Configuration
-
-Config stored at `~/.agentdiff/config.toml`
-
-```toml
-schema_version = "1.0"
-data_dir = "~/.agentdiff/spillover" # optional spillover for no-repo captures
-scripts_dir = "~/.agentdiff/scripts"
-auto_amend_ledger = true
-
-[[repos]]
-path = "/home/user/project"
-slug = "-home-user-project"
-```
-
-Disable same-commit amend behavior:
 ```bash
-agentdiff config set auto_amend_ledger false
-agentdiff init
+# Filter list by agent or file
+agentdiff list --agent cursor --file src/auth
+agentdiff list --limit 50
+
+# Blame for a specific agent only
+agentdiff blame src/api.rs --agent claude-code
+
+# Stats broken down by file and model
+agentdiff stats --by-file --by-model
+
+# Stats from a specific date
+agentdiff stats --since 2026-01-01T00:00:00Z
+
+# CI report to file
+agentdiff report --format markdown --out-md report.md
+agentdiff report --format annotations --out-annotations annotations.json
+
+# Attribution diff for last 3 commits
+agentdiff diff HEAD~3
+
+# Skip specific agents during configure
+agentdiff configure --no-copilot --no-antigravity
+
+# Skip git hook install during init
+agentdiff init --no-git-hook
 ```
+
+</details>
+
+---
 
 ## Supported Agents
 
-- **Claude Code** — via PostToolUse hook
-- **Cursor** — via afterFileEdit/afterTabFileEdit hooks
-- **Codex CLI** — via `notify` hook
-- **Gemini/Antigravity** — via `~/.gemini/settings.json` hooks (`write_file|replace`)
-- **Windsurf** — via `post_write_code` hook
-- **OpenCode** — via `.opencode/plugins/agentdiff.ts`
-- **GitHub Copilot (VS Code)** — via VS Code extension installed to `~/.vscode/extensions/`
-- **MCP context writer** — via `record-context.py` (writes `.git/agentdiff/pending.json`)
-- **Manual batch fallback** — `capture-antigravity.py --prompt "..." --model "..."`
+| Agent | Hook mechanism | Captures |
+|-------|---------------|----------|
+| **Claude Code** | `PostToolUse` hook (`~/.claude/settings.json`) | Edit, Write, MultiEdit |
+| **Cursor** | `afterFileEdit`, `afterTabFileEdit` hooks | Agent edits + Tab completions |
+| **GitHub Copilot** | VS Code extension (`~/.vscode/extensions/`) | Inline completions, chat edits |
+| **Windsurf** | `post_write_code` hook (`~/.codeium/windsurf/hooks.json`) | Cascade agent writes |
+| **OpenCode** | `tool.execute.after` plugin (`~/.config/opencode/plugins/`) | All tool writes |
+| **Codex CLI** | `notify` hook (`~/.codex/config.toml`) | Task-level file changes |
+| **Gemini / Antigravity** | `BeforeTool`/`AfterTool` hooks (`~/.gemini/settings.json`) | `write_file`, `replace` |
 
-## MCP Server
+Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all installed **globally once** via `agentdiff configure` — no per-repo setup needed for those.
 
-`agentdiff-mcp` is a real MCP stdio server.  
-Supported methods:
-- `initialize`
-- `tools/list`
-- `tools/call` for tool `record_context`
+---
 
-`record_context` writes context to `<repo>/.git/agentdiff/pending.json`, which is consumed by `agentdiff` pre/post commit hooks and attached to the next ledger line.
+## Example Output
 
-Example `record_context` arguments:
+<details>
+<summary>agentdiff list</summary>
+
+```
+  agentdiff list — 5 entries
+
+  #   COMMIT     TIME          AGENT         MODEL           FILES  LINES   PROMPT
+  ──────────────────────────────────────────────────────────────────────────────────────────────────
+  1   a1b2c3d4   Mar 20 17:52  claude-code   sonnet-4-6      1      17-24   "add auth middleware"
+  2   b2c3d4e5   Mar 20 18:10  cursor        cursor-fast     2      1, 44   "refactor utils module"
+  3   c3d4e5f6   Mar 20 18:45  copilot       gpt-4o          1      10-12   —
+  4   d4e5f6a7   Mar 20 19:01  codex         o4-mini         3      1-89    "migrate to new API"
+  *   (pending)  Mar 20 19:14  claude-code   sonnet-4-6      1      5-31    "add tests"  (uncommitted)
+```
+
+</details>
+
+<details>
+<summary>agentdiff blame src/main.rs</summary>
+
+```
+  agentdiff blame — src/main.rs
+
+     1  human         fn main() {
+     2  human             let cli = Cli::parse();
+     3  claude-code       let config = Config::load()?;  (Edit)
+     4  claude-code       let store = Store::new(repo_root, config);  (Edit)
+     5  human
+     6  cursor            match cli.command {  (afterFileEdit)
+     7  cursor                Command::Init(args) => init::run_init(&repo_root, &mut cfg),  (afterFileEdit)
+     8  human             }
+     9  human         }
+```
+
+</details>
+
+<details>
+<summary>agentdiff report (Markdown)</summary>
+
+```markdown
+## AI Attribution Report
+
+**Total lines tracked:** 4,231 across 47 commits
+
+| Agent | Lines | Share |
+|-------|-------|-------|
+| claude-code | 2,741 | 65% |
+| cursor | 973 | 23% |
+| copilot | 353 | 8% |
+| human | 164 | 4% |
+
+### Recent AI commits
+- `a1b2c3d` claude-code — "add auth middleware" → src/auth.rs (17-24)
+- `b2c3d4e` cursor — "refactor utils" → src/utils.rs (1-89)
+```
+
+</details>
+
+---
+
+## How It Works
+
+<details>
+<summary>Architecture overview</summary>
+
+**1. `agentdiff configure` — one-time global setup**
+
+Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks with each agent:
+
+- Claude Code → `~/.claude/settings.json` (PostToolUse)
+- Cursor → `~/.cursor/hooks.json` (afterFileEdit, afterTabFileEdit)
+- Codex → `~/.codex/config.toml` (notify)
+- Gemini → `~/.gemini/settings.json` (BeforeTool, AfterTool)
+- Windsurf → `~/.codeium/windsurf/hooks.json` (post_write_code)
+- OpenCode → `~/.config/opencode/plugins/agentdiff.ts` (tool.execute.after)
+- Copilot → VS Code extension in `~/.vscode/extensions/agentdiff-copilot-0.1.0/`
+
+**2. `agentdiff init` — per-repo setup**
+
+Installs git `pre-commit` and `post-commit` hooks in `<repo>/.git/hooks/`, creates `.agentdiff/ledger.jsonl`, and registers the repo in `~/.agentdiff/config.toml`.
+
+**3. Capture flow**
+
+When an AI agent makes an edit, its hook fires and writes a JSON entry to `<repo>/.git/agentdiff/session.jsonl`:
+
 ```json
 {
-  "cwd": "/path/to/repo",
-  "agent": "codex",
-  "model_id": "gpt-5.4",
+  "timestamp": "2026-03-28T10:54:00Z",
+  "agent": "claude-code",
+  "model": "sonnet-4-6",
   "session_id": "sess_abc123",
-  "prompt": "add auth middleware",
-  "files_read": ["src/auth.rs", "src/config.rs"],
-  "intent": "auth hardening",
-  "trust": 92,
-  "flags": ["security"]
+  "tool": "Edit",
+  "file": "src/auth.rs",
+  "lines": [17, 18, 19, 20],
+  "prompt": "add auth middleware"
 }
 ```
 
-### MCP Client Config
+**4. Commit**
 
-Minimal MCP stdio config is provided at:
-- `examples/mcp/agentdiff-mcp.json`
+On `git commit`:
+- Pre-commit hook: matches session entries against staged diff → writes `pending-ledger.json`
+- Post-commit hook: finalizes one ledger line with the commit SHA → appends to `.agentdiff/ledger.jsonl`
+- By default, auto-amends the commit to include the updated ledger
 
-Generic server block:
+**5. Query**
+
+```
+~/.agentdiff/
+├── config.toml           ← global config
+└── scripts/              ← capture scripts (Python)
+
+<repo>/.agentdiff/
+└── ledger.jsonl          ← committed, append-only attribution log
+
+<repo>/.git/agentdiff/
+├── session.jsonl         ← live capture buffer (not committed)
+├── pending.json          ← MCP context handoff (ephemeral)
+└── pending-ledger.json   ← pre-commit snapshot (ephemeral)
+```
+
+</details>
+
+---
+
+## Configuration
+
+Config lives at `~/.agentdiff/config.toml`:
+
+```toml
+schema_version = "1.0"
+scripts_dir = "~/.agentdiff/scripts"
+auto_amend_ledger = true        # include ledger in same commit automatically
+data_dir = "~/.agentdiff/spillover"
+
+[[repos]]
+path = "/home/user/my-project"
+slug = "-home-user-my-project"
+```
+
+```bash
+# Disable auto-amend
+agentdiff config set auto_amend_ledger false
+
+# View current config
+agentdiff config show
+```
+
+---
+
+## MCP Server
+
+`agentdiff-mcp` is a stdio MCP server for richer context capture. It exposes a `record_context` tool that writes structured metadata before a commit:
+
 ```json
 {
   "mcpServers": {
     "agentdiff": {
       "command": "agentdiff-mcp",
-      "args": [],
-      "env": {}
+      "args": []
     }
   }
 }
 ```
 
-Use this same command in Claude/Cursor/Codex/OpenCode MCP settings.
+When an agent calls `record_context`, the prompt, model, session ID, files read, intent, and trust score are stored and attached to the next ledger entry:
 
-## End-to-End Testing
-
-### 1) Reinstall latest binaries and scripts
-```bash
-cargo install --path /home/prakh/agentdiff --force
-cd /path/to/your/repo
-agentdiff init
+```json
+{
+  "cwd": "/path/to/repo",
+  "model_id": "claude-sonnet-4-6",
+  "prompt": "add rate limiting to the API",
+  "files_read": ["src/api.rs", "src/config.rs"],
+  "intent": "security hardening",
+  "trust": 92,
+  "flags": ["security"]
+}
 ```
 
-### 2) MCP flow test (commit should include prompt/model/session)
-```bash
-# In repo root
-agentdiff-mcp
-# In another terminal, send tools/call record_context via your MCP client
-# then make a small edit + git add + git commit
+---
 
-agentdiff list
-agentdiff show HEAD
+## CI Integration
+
+Add AI attribution to your pull requests with one workflow step:
+
+```yaml
+# .github/workflows/agentdiff-report.yml
+on: [pull_request]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install agentdiff
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - name: Init repo (no agent hooks needed in CI)
+        run: agentdiff init --no-git-hook
+      - name: Generate report
+        run: agentdiff report --format markdown --out-md ai-report.md
+      - name: Post as PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: ai-report.md
 ```
 
-### 3) Hook-only fallback test (no MCP)
-```bash
-# Make an AI edit from Cursor/Codex/Windsurf/Claude, then commit
-agentdiff list
-agentdiff show HEAD
-```
+---
 
-### 4) Cursor diagnostics (if entry is missing)
+## Debugging
+
 ```bash
+# Enable verbose logging for all capture scripts
 export AGENTDIFF_DEBUG=1
-# make one Cursor edit + commit
-tail -n 100 ~/.agentdiff/logs/capture-cursor.log
-tail -n 50 .git/agentdiff/session.jsonl
-tail -n 20 .agentdiff/ledger.jsonl
+
+# Then make an AI edit and commit, then check logs
+tail -f ~/.agentdiff/logs/capture-claude.log
+tail -f ~/.agentdiff/logs/capture-cursor.log
+tail -f ~/.agentdiff/logs/capture-codex.log
+
+# Check what was captured before committing
+cat .git/agentdiff/session.jsonl
 ```
 
-### 4b) Codex / Gemini diagnostics (if entry is missing)
-```bash
-export AGENTDIFF_DEBUG=1
-# make one edit in Codex or Gemini, then commit
-tail -n 100 ~/.agentdiff/logs/codex-notify-fired.log
-tail -n 100 ~/.agentdiff/logs/capture-codex.log
-tail -n 50 .git/agentdiff/session.jsonl
-tail -n 20 .agentdiff/ledger.jsonl
-```
+---
 
-### 5) Edge cases to validate
-- Empty or malformed hook payloads should not crash capture scripts.
-- `afterTabFileEdit` events should still attribute file/line/model without prompt.
-- Events with Windows-style backslash paths should resolve to repo-local paths.
-- If hook `cwd` is not repo (for example `~/.cursor`), file-path-based repo resolution should still write to `<repo>/.git/agentdiff/session.jsonl`.
-- Commits with no staged overlap against captured lines should fall back to `human`.
-- Duplicate finalize on same SHA should not append duplicate ledger rows.
+## Contributing
 
-## Release Process
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Tagging `v*` triggers release workflow:
-- Runs Rust + Python tests and MCP smoke test
-- Builds `agentdiff` and `agentdiff-mcp` artifacts for Linux/macOS/Windows
-- Publishes `SHA256SUMS`
-- Creates GitHub Release with artifacts
-- Optionally publishes crate to crates.io when `CARGO_REGISTRY_TOKEN` is set
-
-## Output Formats
-
-### List Output
-```
-  # — COMMIT     TIME         AGENT         MODEL                 TOOL      FILE                          LINES    PROMPT
-  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-  1  a1b2c3d4   Mar 20 17:52 claude-code   sonnet-4-6           Edit      src/auth/tokens.py             17-24   "add auth middleware"
-  2  a1b2c3d4   Mar 20 17:55 cursor        gpt-4o               afterFileEdit src/main.rs             1       "add main entry"
-  * a1b2c3e5   Mar 20 18:02 claude-code   sonnet-4-6           Write     src/utils.rs                  1-94    "refactor utils"  (uncommitted)
-```
-
-### Blame Output
-```
-  agentdiff blame — src/main.rs
-  ───────────────────────────────────────────────────────────────────────────────────────────────────
-     1 human         fn main() {
-     2 human         use anyhow::Result;
-     3 claude-code   use std::process::Command;  (Edit)
-     4 human
-     5 cursor        fn run() -> Result<()> {   (afterFileEdit)
-```
-
-### Stats Output
-```
-  agentdiff — Statistics
-
-  Total lines tracked: 2847
-
-  By Agent:
-    claude-code   1847 (65%) ████████████████████
-    cursor         647 (23%) ████████
-    human         353 (12%) ████
-
-  By File:
-    src/main.rs                    340 lines (78% AI) — claude-code
-    src/auth/mod.rs                220 lines (65% AI) — cursor
-```
-
-## Use Cases
-
-- **Security audits** — Know which AI generated risky code
-- **Compliance** — SOC2, ISO 27001 require knowing what generated production code
-- **Code review** — Identify AI-authored code requiring extra scrutiny
-- **Attribution** — Track prompts driving major changes
-
-## VS Code Copilot Extension
-
-`agentdiff init` installs a plain-JavaScript VS Code extension directly into
-`~/.vscode/extensions/agentdiff-copilot-0.1.0/`. No `npm install` or build step
-is needed. **Restart VS Code** after running `agentdiff init` to activate it.
-
-The extension:
-- Detects GitHub Copilot inline completions (multi-character/multi-line insertions)
-- Flushes captured lines to `session.jsonl` on file save
-- Exposes command **"agentdiff: Capture Copilot edits for current file"** for manual capture
-
-To skip Copilot setup: `agentdiff init --no-copilot`
-To skip Gemini/Antigravity setup: `agentdiff init --no-antigravity`
-
-> **Note:** The extension uses a heuristic — insertions of ≥10 characters or multiple
-> lines while Copilot is active are attributed to Copilot. Short single-character
-> insertions are treated as manual typing.
-
-## Architecture
-
-```
-~/.agentdiff/
-├── config.toml           ← Global configuration
-├── scripts/              ← Python capture scripts
-│   ├── capture-claude.py
-│   ├── capture-cursor.py
-│   ├── capture-codex.py
-│   ├── capture-windsurf.py
-│   ├── capture-opencode.py
-│   ├── capture-copilot.py
-│   ├── prepare-ledger.py
-│   ├── finalize-ledger.py
-│   ├── record-context.py
-│   ├── capture-antigravity.py
-│   └── write-note.py      ← legacy notes writer (migration only)
-└── spillover/            ← Optional no-repo event spillover
-
-~/.vscode/extensions/
-└── agentdiff-copilot-0.1.0/
-    ├── package.json      ← VS Code extension manifest
-    └── extension.js      ← Copilot capture logic (plain JS, no build needed)
-
-<repo>/.agentdiff/
-└── ledger.jsonl          ← Canonical committed append-only attribution log
-
-<repo>/.git/agentdiff/
-├── session.jsonl         ← Uncommitted per-repo buffer from hooks/agents
-├── pending.json          ← Ephemeral MCP context handoff
-└── pending-ledger.json   ← Pre-commit snapshot finalized in post-commit
-
-<repo>/.windsurf/
-└── hooks.json            ← Windsurf repo-level hook config
-
-<repo>/.opencode/plugins/
-└── agentdiff.ts          ← OpenCode repo-level plugin
-
-git refs (legacy migration source):
-└── refs/notes/agentdiff
-```
-
-## Requirements
-
-- Rust 1.85+
-- Python 3.7+ (for capture scripts)
-- Git repository
+---
 
 ## License
 
-Dual-licensed under:
-- MIT ([LICENSE-MIT](LICENSE-MIT))
-- Apache-2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+Dual-licensed under [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE).

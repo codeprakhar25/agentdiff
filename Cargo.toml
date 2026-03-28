@@ -1,6 +1,6 @@
 [package]
 name = "agentdiff"
-version = "0.1.0"
+version = "0.1.13"
 edition = "2024"
 rust-version = "1.85"
 description = "Audit and trace autonomous AI code contributions in git repositories"
@@ -14,8 +14,6 @@ keywords = ["ai", "git", "audit", "mcp", "agent"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = [
     ".agentdiff/*",
-    ".opencode/*",
-    ".windsurf/*",
     "agentdiff_e2e_cycle.txt",
     "agentdiff_mcp_server_cycle.txt",
 ]

@@ -30,6 +30,7 @@ pub fn run_configure(
     no_windsurf: bool,
     no_opencode: bool,
     no_copilot: bool,
+    no_mcp: bool,
 ) -> Result<()> {
     println!("{}", "agentdiff configure".bold().cyan());
     println!();
@@ -43,9 +44,12 @@ pub fn run_configure(
     // Step 2 — install Python scripts into ~/.agentdiff/scripts/
     step_install_scripts(config)?;
 
-    // Step 3 — configure Claude Code ~/.claude/settings.json
+    // Step 3 — configure Claude Code ~/.claude/settings.json (hooks + MCP server)
     if !no_claude {
         step_configure_claude(config)?;
+    }
+    if !no_mcp {
+        step_configure_mcp_claude()?;
     }
 
     // Step 4 — configure Cursor ~/.cursor/hooks.json
@@ -524,6 +528,60 @@ fn step_configure_claude(config: &Config) -> Result<()> {
         );
     } else {
         println!("{} Claude Code hook already present", "--".dimmed());
+    }
+    Ok(())
+}
+
+/// Register agentdiff-mcp as an MCP server in ~/.claude/settings.json.
+/// This lets Claude automatically call `record_context` during sessions,
+/// enriching ledger entries with intent, trust, files_read, and flags.
+fn step_configure_mcp_claude() -> Result<()> {
+    let settings_path = dirs::home_dir()
+        .unwrap()
+        .join(".claude")
+        .join("settings.json");
+
+    let raw = fs::read_to_string(&settings_path).unwrap_or_else(|_| "{}".to_string());
+    let mut settings: serde_json::Value =
+        serde_json::from_str(&raw).context("parsing ~/.claude/settings.json")?;
+
+    let mcp_servers = settings
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert(serde_json::json!({}))
+        .as_object_mut()
+        .unwrap();
+
+    let server_entry = serde_json::json!({
+        "command": "agentdiff-mcp",
+        "args": [],
+        "env": {}
+    });
+
+    let already_correct = mcp_servers
+        .get("agentdiff")
+        .and_then(|e| e.get("command"))
+        .and_then(|c| c.as_str())
+        == Some("agentdiff-mcp");
+
+    if !already_correct {
+        mcp_servers.insert("agentdiff".to_string(), server_entry);
+        if let Some(parent) = settings_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+        println!(
+            "{} agentdiff-mcp registered in {}",
+            "ok".green(),
+            settings_path.display()
+        );
+        println!(
+            "{}",
+            "    Restart Claude Code to activate the MCP server.".dimmed()
+        );
+    } else {
+        println!("{} agentdiff-mcp already registered in Claude Code", "--".dimmed());
     }
     Ok(())
 }

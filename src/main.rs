@@ -54,6 +54,7 @@ fn main() -> anyhow::Result<()> {
                 args.no_windsurf,
                 args.no_opencode,
                 args.no_copilot,
+                args.no_mcp,
             )
         }
         Command::Init(args) => {

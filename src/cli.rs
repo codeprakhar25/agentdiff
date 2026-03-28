@@ -84,6 +84,10 @@ pub struct ConfigureArgs {
     /// Skip VS Code Copilot extension setup
     #[arg(long)]
     pub no_copilot: bool,
+
+    /// Skip MCP server registration with Claude Code
+    #[arg(long)]
+    pub no_mcp: bool,
 }
 
 #[derive(Args, Debug)]

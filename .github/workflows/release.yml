@@ -15,6 +15,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify tag matches Cargo.toml version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          crate_version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')"
+          if [[ "$tag_version" != "$crate_version" ]]; then
+            echo "Tag version ($tag_version) does not match Cargo.toml version ($crate_version)." >&2
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -163,4 +174,18 @@ jobs:
             echo "CARGO_REGISTRY_TOKEN is not set; skipping crates.io publish."
             exit 0
           fi
-          cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+
+          set +e
+          publish_output="$(cargo publish --locked 2>&1)"
+          publish_status=$?
+          set -e
+
+          echo "$publish_output"
+
+          if [[ $publish_status -ne 0 ]]; then
+            if grep -q "already exists on crates.io index" <<<"$publish_output"; then
+              echo "crate version already published; skipping."
+              exit 0
+            fi
+            exit $publish_status
+          fi

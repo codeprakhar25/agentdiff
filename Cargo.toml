@@ -1,6 +1,6 @@
 [package]
 name = "agentdiff"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 rust-version = "1.85"
 description = "Audit and trace autonomous AI code contributions in git repositories"

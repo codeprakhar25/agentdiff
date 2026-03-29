@@ -115,6 +115,8 @@ def main() -> int:
         entry["intent"] = str(pending.get("intent"))
     if isinstance(pending.get("trust"), int):
         entry["trust"] = max(0, min(100, int(pending["trust"])))
+    if isinstance(pending.get("attribution"), dict):
+        entry["attribution"] = pending["attribution"]
 
     parent = os.path.dirname(ledger_path)
     if parent:

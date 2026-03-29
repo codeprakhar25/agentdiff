@@ -136,16 +136,21 @@ def event_overlaps_staged(event: dict, lines_by_file: Dict[str, List[Tuple[int, 
     return False
 
 
-def read_latest_session_event(
+def read_events_per_file(
     path: str,
     touched_files: List[str],
     min_ts: int,
     lines_by_file: Dict[str, List[Tuple[int, int]]],
-):
+) -> Dict[str, dict]:
+    """Return the most-recent overlapping session event for each staged file.
+
+    Returns a dict keyed by repo-relative file path. When multiple agents
+    touched different files in the same session window each file gets its
+    own correct attribution instead of a single winner-takes-all event.
+    """
     if not os.path.exists(path):
-        return None
-    latest_for_touched = None
-    latest_for_touched_ts = 0
+        return {}
+    best: Dict[str, Tuple[int, dict]] = {}  # file -> (ts, event)
     try:
         with open(path, "r", encoding="utf-8") as f:
             for raw in f:
@@ -162,15 +167,38 @@ def read_latest_session_event(
                 if event_ts < min_ts:
                     continue
                 file_path = str(event.get("file", "")).strip()
-                if file_path and file_path in touched_files:
-                    if not event_overlaps_staged(event, lines_by_file):
-                        continue
-                    if event_ts >= latest_for_touched_ts:
-                        latest_for_touched = event
-                        latest_for_touched_ts = event_ts
+                if not file_path or file_path not in touched_files:
+                    continue
+                if not event_overlaps_staged(event, lines_by_file):
+                    continue
+                prev_ts, _ = best.get(file_path, (0, None))
+                if event_ts >= prev_ts:
+                    best[file_path] = (event_ts, event)
     except Exception:
-        return None
-    return latest_for_touched
+        return {}
+    return {fp: ev for fp, (_, ev) in best.items()}
+
+
+def dominant_event(events_by_file: Dict[str, dict], lines_by_file: Dict[str, List[Tuple[int, int]]]) -> dict:
+    """Pick the agent/model to use as the top-level record field.
+
+    Chooses the agent that wrote the most lines across all staged files.
+    Falls back to most-recently-touched file if line counts are equal.
+    """
+    if not events_by_file:
+        return {}
+    line_count: Dict[str, int] = {}
+    for fp, event in events_by_file.items():
+        agent = str(event.get("agent") or "human")
+        ranges = lines_by_file.get(fp, [])
+        count = sum(max(0, b - a + 1) for a, b in ranges)
+        line_count[agent] = line_count.get(agent, 0) + count
+    dominant_agent = max(line_count, key=lambda a: line_count[a])
+    # Return the most recent event for the dominant agent
+    for fp, event in reversed(list(events_by_file.items())):
+        if str(event.get("agent") or "human") == dominant_agent:
+            return event
+    return next(iter(events_by_file.values()))
 
 
 def prompt_excerpt(prompt: str, limit: int = 160) -> str:
@@ -211,15 +239,15 @@ def main() -> int:
     if not isinstance(pending, dict):
         pending = {}
 
-    event = (
-        read_latest_session_event(
-            session_log,
-            files_touched,
-            head_commit_ts(repo_root),
-            lines_by_file,
-        )
-        or {}
+    events_by_file = read_events_per_file(
+        session_log,
+        files_touched,
+        head_commit_ts(repo_root),
+        lines_by_file,
     )
+
+    # Top-level agent/model/session come from the dominant event (most lines written)
+    event = dominant_event(events_by_file, lines_by_file) or {}
 
     prompt = str(pending.get("prompt") or event.get("prompt") or "")
     session_id = str(pending.get("session_id") or event.get("session_id") or "unknown")
@@ -245,6 +273,21 @@ def main() -> int:
     if intent is not None:
         intent = str(intent)
 
+    # Per-file attribution — each file maps to the agent/model that wrote it.
+    # Only populated when multiple agents are detected; omitted for single-agent commits.
+    attribution: Dict[str, dict] = {}
+    for fp, ev in events_by_file.items():
+        file_agent = str(ev.get("agent") or "human")
+        file_model = str(ev.get("model") or "human")
+        if file_agent != agent or file_model != model:
+            # Only store when it differs from the dominant agent (saves space for single-agent commits)
+            attribution[fp] = {
+                "agent": file_agent,
+                "model": file_model,
+                "session_id": str(ev.get("session_id") or "unknown"),
+                "tool": str(ev.get("tool") or "commit"),
+            }
+
     payload = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "agent": agent,
@@ -262,6 +305,8 @@ def main() -> int:
         "tool": str(event.get("tool") or "commit"),
         "mode": event.get("mode"),
     }
+    if attribution:
+        payload["attribution"] = attribution
     if intent:
         payload["intent"] = intent
     if trust is not None:

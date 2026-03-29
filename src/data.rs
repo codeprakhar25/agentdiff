@@ -108,6 +108,17 @@ pub struct NotesFileAttribution {
     pub ranges: Vec<(u32, u32)>,
 }
 
+/// Per-file attribution when multiple agents contributed to a single commit.
+/// Stored in LedgerRecord.attribution for files whose agent differs from the
+/// dominant agent recorded at the top level.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileAttribution {
+    pub agent: String,
+    pub model: String,
+    pub session_id: String,
+    pub tool: String,
+}
+
 /// Canonical append-only ledger entry (one line per commit) stored at
 /// <repo>/.agentdiff/ledger.jsonl
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +135,10 @@ pub struct LedgerRecord {
     /// Per-file line ranges [start, end] (inclusive)
     #[serde(default)]
     pub lines: HashMap<String, Vec<(u32, u32)>>,
+    /// Per-file attribution when multiple agents contributed.
+    /// Only present when a file's agent differs from the top-level agent.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub attribution: HashMap<String, FileAttribution>,
     #[serde(default)]
     pub prompt_excerpt: String,
     #[serde(default)]

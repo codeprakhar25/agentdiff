@@ -192,13 +192,20 @@ impl Store {
             let abs = self.repo_root.join(file).to_string_lossy().to_string();
             let lines = expand_ranges(record.lines.get(file).cloned().unwrap_or_default());
 
+            // Use per-file attribution if available, otherwise fall back to record-level.
+            let file_attr = record.attribution.get(file);
+            let agent = file_attr.map(|a| a.agent.clone()).unwrap_or_else(|| record.agent.clone());
+            let model = file_attr.map(|a| a.model.clone()).unwrap_or_else(|| record.model.clone());
+            let session_id = file_attr.map(|a| a.session_id.clone()).unwrap_or_else(|| record.session_id.clone());
+            let file_tool = file_attr.map(|a| a.tool.clone()).unwrap_or_else(|| tool.clone());
+
             out.push(Entry {
                 timestamp: record.ts,
-                agent: record.agent.clone(),
+                agent,
                 mode: record.mode.clone(),
-                model: record.model.clone(),
-                session_id: record.session_id.clone(),
-                tool: tool.clone(),
+                model,
+                session_id,
+                tool: file_tool,
                 file: file.clone(),
                 abs_file: abs,
                 prompt: if record.prompt_excerpt.is_empty() {

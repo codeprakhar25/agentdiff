@@ -148,6 +148,7 @@ fn notes_to_ledger(note: NotesRecord) -> LedgerRecord {
         flags: vec!["imported-from-notes".to_string()],
         tool: Some("imported-note".to_string()),
         mode: None,
+        attribution: std::collections::HashMap::new(),
     }
 }
 

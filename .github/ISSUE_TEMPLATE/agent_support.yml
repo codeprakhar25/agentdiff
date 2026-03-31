@@ -1,0 +1,35 @@
+name: New Agent Support
+description: Request support for an AI coding agent not currently covered
+labels: ["agent-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agentdiff currently supports Claude Code, Cursor, Copilot, Codex, Windsurf, OpenCode, and Gemini.
+        If you use a different agent, open this request and we'll look into it.
+
+  - type: input
+    id: agent_name
+    attributes:
+      label: Agent name
+      placeholder: e.g. Aider, Continue.dev, Cody
+    validations:
+      required: true
+
+  - type: input
+    id: agent_url
+    attributes:
+      label: Agent website or repo
+      placeholder: https://...
+
+  - type: textarea
+    id: hook_mechanism
+    attributes:
+      label: Does the agent expose hooks or a plugin API?
+      description: Any docs, settings, or known extension points that could be used to intercept file edits.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Why do you need this?
+      description: Are you using it in production? How many people on your team?

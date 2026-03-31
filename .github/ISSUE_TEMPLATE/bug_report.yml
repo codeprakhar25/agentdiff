@@ -1,0 +1,91 @@
+name: Bug Report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Fill out as much as you can — the debug logs are the most useful thing you can include.
+
+  - type: input
+    id: version
+    attributes:
+      label: agentdiff version
+      placeholder: "run: agentdiff --version"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent were you using?
+      multiple: true
+      options:
+        - Claude Code
+        - Cursor
+        - GitHub Copilot
+        - Codex CLI
+        - Windsurf
+        - OpenCode
+        - Gemini / Antigravity
+        - Other / Not agent-specific
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux
+        - Windows
+    validations:
+      required: true
+
+  - type: input
+    id: rust
+    attributes:
+      label: Rust version
+      placeholder: "run: rustc --version"
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "run: python3 --version"
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `agentdiff configure`
+        2. Make an edit with Cursor
+        3. Run `git commit`
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Debug logs
+      description: |
+        Run with `AGENTDIFF_DEBUG=1`, reproduce the issue, then paste the relevant logs:
+        ```bash
+        export AGENTDIFF_DEBUG=1
+        # reproduce (make an AI edit, commit)
+        cat ~/.agentdiff/logs/capture-<agent>.log
+        cat .git/agentdiff/session.jsonl
+        ```
+      render: shell

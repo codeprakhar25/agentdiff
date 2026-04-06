@@ -10,8 +10,14 @@ const fs = require('fs');
 const CAPTURE_SCRIPT = '__AGENTDIFF_CAPTURE_COPILOT__';
 
 // Minimum insertion length to be considered a Copilot-originated change.
-// Short single-char or very short insertions are treated as manual typing.
-const MIN_COPILOT_CHANGE_LEN = 10;
+// Must be high enough to avoid capturing human typing, copy-paste, and edits
+// from other agents (Claude, Cursor, Codex) that also trigger VS Code's
+// onDidChangeTextDocument events.  50 chars catches multi-line Copilot
+// completions while filtering out most false positives.
+const MIN_COPILOT_CHANGE_LEN = 50;
+
+// Paths that should never be attributed to Copilot (auto-generated metadata).
+const EXCLUDED_PATHS = ['.agentdiff/', '.git/'];
 
 function isDebug() {
     const v = process.env.AGENTDIFF_DEBUG || '';
@@ -111,6 +117,10 @@ function activate(context) {
         if (!copilotExt.isActive) return;
 
         const filePath = event.document.uri.fsPath;
+
+        // Skip metadata paths that are auto-generated.
+        const relPath = vscode.workspace.asRelativePath(filePath, false);
+        if (EXCLUDED_PATHS.some((p) => relPath.startsWith(p))) return;
         const pending = pendingChanges.get(filePath) || { lines: new Set(), tool: 'inline' };
         let changed = false;
 

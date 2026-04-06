@@ -1,6 +1,6 @@
 [package]
 name = "agentdiff"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2024"
 rust-version = "1.85"
 description = "Audit and trace autonomous AI code contributions in git repositories"
@@ -38,6 +38,11 @@ anyhow = "1"
 thiserror = "1"
 glob = "0.3"
 sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+json-canon = "0.1"
+base64 = "0.22"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

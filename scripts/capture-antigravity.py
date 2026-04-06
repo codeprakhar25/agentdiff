@@ -272,7 +272,19 @@ def main():
     parser.add_argument("--model", default="")
     args = parser.parse_args()
 
-    stdin_payload = parse_json_or_jsonl(sys.stdin.read())
+    raw_stdin = sys.stdin.read()
+
+    # Always write a fire-marker (helps diagnose silent failures).
+    try:
+        marker_dir = os.path.expanduser("~/.agentdiff/logs")
+        os.makedirs(marker_dir, exist_ok=True)
+        with open(os.path.join(marker_dir, "antigravity-hook-fired.log"), "a") as mf:
+            ts = datetime.now(timezone.utc).isoformat()
+            mf.write(f"{ts} stdin_len={len(raw_stdin)} first200={raw_stdin[:200]}\n")
+    except Exception:
+        pass
+
+    stdin_payload = parse_json_or_jsonl(raw_stdin)
 
     if isinstance(stdin_payload, dict):
         ctx = resolve_payload_context(stdin_payload)

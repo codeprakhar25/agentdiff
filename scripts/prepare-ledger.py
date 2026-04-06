@@ -136,6 +136,13 @@ def event_overlaps_staged(event: dict, lines_by_file: Dict[str, List[Tuple[int, 
     return False
 
 
+# Agents with targeted capture hooks (reliable attribution signal).
+# Copilot fires on every document change in VS Code, including edits by
+# Claude, Codex, Windsurf, and human typing — so it is treated as a
+# low-confidence signal that must yield to any targeted agent.
+_NOISY_AGENTS = {"copilot"}
+
+
 def read_events_per_file(
     path: str,
     touched_files: List[str],
@@ -147,6 +154,11 @@ def read_events_per_file(
     Returns a dict keyed by repo-relative file path. When multiple agents
     touched different files in the same session window each file gets its
     own correct attribution instead of a single winner-takes-all event.
+
+    When both a targeted agent (claude-code, cursor, codex, windsurf, …) and
+    copilot have events for the same file, the targeted agent wins regardless
+    of timestamp — copilot's VS Code extension fires on *all* document changes
+    and would otherwise drown out the real source.
     """
     if not os.path.exists(path):
         return {}
@@ -171,8 +183,19 @@ def read_events_per_file(
                     continue
                 if not event_overlaps_staged(event, lines_by_file):
                     continue
-                prev_ts, _ = best.get(file_path, (0, None))
-                if event_ts >= prev_ts:
+
+                agent = str(event.get("agent") or "human")
+                prev_ts, prev_ev = best.get(file_path, (0, None))
+                prev_agent = str(prev_ev.get("agent") or "human") if prev_ev else ""
+
+                if prev_agent in _NOISY_AGENTS and agent not in _NOISY_AGENTS:
+                    # Targeted agent always overrides copilot.
+                    best[file_path] = (event_ts, event)
+                elif prev_agent not in _NOISY_AGENTS and prev_agent and agent in _NOISY_AGENTS:
+                    # Never let copilot overwrite a targeted agent.
+                    pass
+                elif event_ts >= prev_ts:
+                    # Same tier — most recent wins.
                     best[file_path] = (event_ts, event)
     except Exception:
         return {}
@@ -199,6 +222,16 @@ def dominant_event(events_by_file: Dict[str, dict], lines_by_file: Dict[str, Lis
         if str(event.get("agent") or "human") == dominant_agent:
             return event
     return next(iter(events_by_file.values()))
+
+
+def get_git_username(repo_root: str) -> str:
+    """Return git user.name; falls back to 'human' if unset."""
+    try:
+        out = run(["git", "config", "user.name"], cwd=repo_root)
+        name = out.stdout.strip()
+        return name if name else "human"
+    except Exception:
+        return "human"
 
 
 def prompt_excerpt(prompt: str, limit: int = 160) -> str:
@@ -234,6 +267,14 @@ def main() -> int:
     if not lines_by_file:
         return 0
 
+    # Exclude agentdiff metadata from attribution — it's auto-generated, not AI code.
+    lines_by_file = {
+        f: r for f, r in lines_by_file.items()
+        if not f.startswith(".agentdiff/")
+    }
+    if not lines_by_file:
+        return 0
+
     files_touched = sorted(lines_by_file.keys())
     pending = read_json_file(pending_context_path)
     if not isinstance(pending, dict):
@@ -252,6 +293,8 @@ def main() -> int:
     prompt = str(pending.get("prompt") or event.get("prompt") or "")
     session_id = str(pending.get("session_id") or event.get("session_id") or "unknown")
     agent = str(pending.get("agent") or event.get("agent") or "human")
+    if agent == "human":
+        agent = get_git_username(repo_root)
     model = str(pending.get("model_id") or pending.get("model") or event.get("model") or "human")
     files_read = pending.get("files_read")
     if not isinstance(files_read, list):

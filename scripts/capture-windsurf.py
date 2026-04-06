@@ -142,6 +142,17 @@ def compute_line_range(abs_file: str, old_content: str, new_content: str):
 
 def main() -> int:
     input_data = sys.stdin.read()
+
+    # Always write a fire-marker (helps diagnose silent failures).
+    try:
+        marker_dir = os.path.expanduser("~/.agentdiff/logs")
+        os.makedirs(marker_dir, exist_ok=True)
+        with open(os.path.join(marker_dir, "windsurf-hook-fired.log"), "a") as mf:
+            ts = datetime.now(timezone.utc).isoformat()
+            mf.write(f"{ts} stdin_len={len(input_data)}\n")
+    except Exception:
+        pass
+
     if not input_data.strip():
         return 0
     debug_log(f"raw={input_data[:2000]}")

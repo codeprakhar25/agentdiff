@@ -452,9 +452,17 @@ def resolve_repo_and_changes(candidates: List[str]) -> Tuple[str, str, Dict[str,
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--forward", default="")
-    args = parser.parse_args()
+    # Codex may pass JSON as a positional arg (sys.argv[1]) or on stdin.
+    # Accept both — newer versions use argv, older versions use stdin.
+    parser.add_argument("payload", nargs="?", default="")
+    args, unknown = parser.parse_known_args()
 
-    input_data = sys.stdin.read()
+    # Try positional arg first (Codex v0.118+), then unknown args, then stdin.
+    input_data = args.payload.strip()
+    if not input_data and unknown:
+        input_data = " ".join(unknown).strip()
+    if not input_data:
+        input_data = sys.stdin.read()
 
     # Always write a fire-marker so we can tell if notify ever runs,
     # regardless of AGENTDIFF_DEBUG (helps diagnose silent failures).
@@ -464,7 +472,8 @@ def main() -> int:
         marker = os.path.join(marker_dir, "codex-notify-fired.log")
         with open(marker, "a", encoding="utf-8") as mf:
             ts = datetime.now(timezone.utc).isoformat()
-            mf.write(f"{ts} stdin_len={len(input_data)}\n")
+            source = "argv" if args.payload.strip() or unknown else "stdin"
+            mf.write(f"{ts} {source} len={len(input_data)}\n")
     except Exception:
         pass
 

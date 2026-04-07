@@ -18,11 +18,35 @@ impl Store {
         Config::repo_ledger_path(&self.repo_root)
     }
 
+    /// Read raw JSONL content for ledger entries, trying agentdiff-meta branch
+    /// first (enterprise storage) then falling back to the working-tree file.
+    pub fn ledger_jsonl_content(&self) -> Result<Option<String>> {
+        // Try meta branch first.
+        let meta = std::process::Command::new("git")
+            .args(["show", "agentdiff-meta:ledger.jsonl"])
+            .current_dir(&self.repo_root)
+            .output();
+        if let Ok(out) = meta {
+            if out.status.success() {
+                return Ok(Some(String::from_utf8_lossy(&out.stdout).to_string()));
+            }
+        }
+        // Fall back to working-tree file.
+        let path = self.ledger_path();
+        if path.exists() {
+            let raw = std::fs::read_to_string(&path)
+                .with_context(|| format!("reading {}", path.display()))?;
+            return Ok(Some(raw));
+        }
+        Ok(None)
+    }
+
     /// Load ALL entries from:
-    ///   1) .agentdiff/ledger.jsonl           [canonical committed]
-    ///   2) refs/notes/agentdiff              [legacy committed fallback]
-    ///   3) .git/agentdiff/session.jsonl      [uncommitted]
-    ///   4) legacy paths (read-only compat)
+    ///   1) agentdiff-meta:ledger.jsonl       [meta branch — enterprise storage]
+    ///   2) .agentdiff/ledger.jsonl           [working-tree fallback]
+    ///   3) refs/notes/agentdiff              [legacy committed fallback]
+    ///   4) .git/agentdiff/session.jsonl      [uncommitted]
+    ///   5) legacy paths (read-only compat)
     pub fn load_entries(&self) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
 
@@ -76,13 +100,10 @@ impl Store {
     }
 
     pub fn load_ledger_records(&self) -> Result<Vec<LedgerRecord>> {
-        let path = self.ledger_path();
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let raw = std::fs::read_to_string(&path)
-            .with_context(|| format!("reading {}", path.display()))?;
+        let raw = match self.ledger_jsonl_content()? {
+            Some(s) => s,
+            None => return Ok(Vec::new()),
+        };
 
         let mut by_sha: HashMap<String, LedgerRecord> = HashMap::new();
         for (idx, line) in raw.lines().enumerate() {
@@ -95,9 +116,8 @@ impl Store {
                 Ok(v) => v,
                 Err(err) => {
                     eprintln!(
-                        "agentdiff: skipping malformed ledger line {} in {}: {}",
+                        "agentdiff: skipping malformed ledger line {}: {}",
                         idx + 1,
-                        path.display(),
                         err
                     );
                     continue;
@@ -114,6 +134,53 @@ impl Store {
 
         let mut out: Vec<LedgerRecord> = by_sha.into_values().collect();
         out.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.sha.cmp(&b.sha)));
+        Ok(out)
+    }
+
+    /// Load ledger as raw JSON values in chronological order.
+    /// Used by `verify` so signatures are checked against the exact bytes on disk,
+    /// not a serde-roundtripped representation that may change field values (e.g. timestamps).
+    pub fn load_ledger_raw(&self) -> Result<Vec<serde_json::Value>> {
+        let raw = match self.ledger_jsonl_content()? {
+            Some(s) => s,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut by_sha: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+        for (idx, line) in raw.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let value: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(err) => {
+                    eprintln!(
+                        "agentdiff: skipping malformed ledger line {}: {}",
+                        idx + 1,
+                        err
+                    );
+                    continue;
+                }
+            };
+            let sha = value
+                .get("sha")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if !sha.is_empty() {
+                by_sha.entry(sha).or_insert(value);
+            }
+        }
+
+        // Sort by "ts" field string (ISO-8601 sorts lexicographically).
+        let mut out: Vec<serde_json::Value> = by_sha.into_values().collect();
+        out.sort_by(|a, b| {
+            let ta = a.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+            let tb = b.get("ts").and_then(|v| v.as_str()).unwrap_or("");
+            ta.cmp(tb)
+        });
         Ok(out)
     }
 

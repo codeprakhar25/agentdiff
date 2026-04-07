@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Finalize pending ledger snapshot after commit and append to ledger.jsonl.
+Finalize pending ledger snapshot after commit.
+
+Writes to the agentdiff-meta branch (enterprise storage, no working-tree
+pollution) via git plumbing. Falls back to appending to ledger.jsonl on disk
+if the git plumbing fails (e.g. first-time setup, no git binary on PATH).
 
 Usage:
   finalize-ledger.py <repo_root> <pending_ledger> <pending_context> <ledger_path>
@@ -9,7 +13,8 @@ import json
 import os
 import subprocess
 import sys
-from typing import List
+import tempfile
+from typing import List, Optional
 
 
 def run(cmd: List[str], cwd: str) -> subprocess.CompletedProcess:
@@ -34,24 +39,114 @@ def remove_if_exists(path: str) -> None:
         pass
 
 
-def sha_exists(ledger_path: str, sha: str) -> bool:
+def sha_in_content(content: str, sha: str) -> bool:
+    """Check if a SHA already exists in JSONL content."""
+    for raw in content.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict) and obj.get("sha") == sha:
+            return True
+    return False
+
+
+def get_meta_branch_content(repo_root: str) -> Optional[str]:
+    """Read current ledger.jsonl from agentdiff-meta branch. Returns None if not found."""
+    res = run(["git", "show", "agentdiff-meta:ledger.jsonl"], cwd=repo_root)
+    if res.returncode == 0:
+        return res.stdout
+    return None
+
+
+def write_to_meta_branch(repo_root: str, new_content: str) -> bool:
+    """
+    Write new_content as ledger.jsonl on the agentdiff-meta branch using
+    git plumbing — no checkout, no working-tree changes.
+    Returns True on success.
+    """
+    tmp_path = None
+    try:
+        # Write content to a temp file so git can hash it.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".jsonl", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(new_content)
+            tmp_path = f.name
+
+        # Hash the file to get a blob SHA.
+        blob_res = run(["git", "hash-object", "-w", tmp_path], cwd=repo_root)
+        if blob_res.returncode != 0:
+            return False
+        blob_sha = blob_res.stdout.strip()
+
+        # Create a tree containing just ledger.jsonl.
+        tree_input = f"100644 blob {blob_sha}\tledger.jsonl\n"
+        tree_res = subprocess.run(
+            ["git", "mktree"],
+            input=tree_input,
+            text=True,
+            capture_output=True,
+            cwd=repo_root,
+        )
+        if tree_res.returncode != 0:
+            return False
+        tree_sha = tree_res.stdout.strip()
+
+        # Find parent commit if the branch already exists.
+        parent_res = run(
+            ["git", "rev-parse", "refs/heads/agentdiff-meta"], cwd=repo_root
+        )
+        parent_args: List[str] = []
+        if parent_res.returncode == 0:
+            parent_sha = parent_res.stdout.strip()
+            if parent_sha:
+                parent_args = ["-p", parent_sha]
+
+        # Get short SHA of the current HEAD for the commit message.
+        short_res = run(["git", "rev-parse", "--short", "HEAD"], cwd=repo_root)
+        short_sha = short_res.stdout.strip() if short_res.returncode == 0 else "?"
+
+        # Create the commit object.
+        commit_res = subprocess.run(
+            ["git", "commit-tree", tree_sha, "-m", f"agentdiff: {short_sha}"]
+            + parent_args,
+            text=True,
+            capture_output=True,
+            cwd=repo_root,
+        )
+        if commit_res.returncode != 0:
+            return False
+        commit_sha = commit_res.stdout.strip()
+
+        # Update the branch ref.
+        ref_res = run(
+            ["git", "update-ref", "refs/heads/agentdiff-meta", commit_sha],
+            cwd=repo_root,
+        )
+        return ref_res.returncode == 0
+
+    except Exception:
+        return False
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except Exception:
+                pass
+
+
+def sha_exists_on_disk(ledger_path: str, sha: str) -> bool:
     if not os.path.exists(ledger_path):
         return False
     try:
         with open(ledger_path, "r", encoding="utf-8") as f:
-            for raw in f:
-                line = raw.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                if isinstance(obj, dict) and obj.get("sha") == sha:
-                    return True
+            return sha_in_content(f.read(), sha)
     except Exception:
         return False
-    return False
 
 
 def main() -> int:
@@ -81,7 +176,14 @@ def main() -> int:
     if not sha:
         return 1
 
-    if sha_exists(ledger_path, sha):
+    # Check if SHA already recorded — try meta branch first, then disk file.
+    meta_content = get_meta_branch_content(repo_root)
+    if meta_content is not None:
+        if sha_in_content(meta_content, sha):
+            remove_if_exists(pending_ledger_path)
+            remove_if_exists(pending_context_path)
+            return 0
+    elif sha_exists_on_disk(ledger_path, sha):
         remove_if_exists(pending_ledger_path)
         remove_if_exists(pending_context_path)
         return 0
@@ -94,7 +196,7 @@ def main() -> int:
     author_res = run(["git", "show", "-s", "--format=%an", "HEAD"], cwd=repo_root)
     author = author_res.stdout.strip() if author_res.returncode == 0 else ""
 
-    entry = {
+    entry: dict = {
         "sha": sha,
         "ts": ts,
         "agent": str(pending.get("agent") or "human"),
@@ -118,14 +220,22 @@ def main() -> int:
     if isinstance(pending.get("attribution"), dict):
         entry["attribution"] = pending["attribution"]
 
+    entry = {k: v for (k, v) in entry.items() if v is not None}
+    entry_line = json.dumps(entry, separators=(",", ":")) + "\n"
+
+    # Try writing to agentdiff-meta branch (enterprise storage).
+    existing = meta_content if meta_content is not None else ""
+    if write_to_meta_branch(repo_root, existing + entry_line):
+        remove_if_exists(pending_ledger_path)
+        remove_if_exists(pending_context_path)
+        return 0
+
+    # Fallback: append to working-tree ledger.jsonl.
     parent = os.path.dirname(ledger_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
-
-    entry = {k: v for (k, v) in entry.items() if v is not None}
-
     with open(ledger_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        f.write(entry_line)
 
     remove_if_exists(pending_ledger_path)
     remove_if_exists(pending_context_path)

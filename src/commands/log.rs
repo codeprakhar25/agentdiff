@@ -1,8 +1,9 @@
 use crate::cli::LogArgs;
 use crate::store::Store;
-use crate::util::{fmt_lines, fmt_prompt, fmt_time};
+use crate::util::{fmt_prompt, fmt_time};
 use anyhow::Result;
 use colored::Colorize;
+use std::collections::HashMap;
 
 pub fn run(store: &Store, args: &LogArgs) -> Result<()> {
     let mut entries = store.load_entries()?;
@@ -14,53 +15,98 @@ pub fn run(store: &Store, args: &LogArgs) -> Result<()> {
     entries.sort_by_key(|e| e.timestamp);
     entries.reverse(); // newest first
 
-    let display_entries = entries.iter().take(args.limit);
+    // Group by commit hash, preserving newest-first order.
+    let mut seen_commits: Vec<String> = Vec::new();
+    let mut by_commit: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        let key = if e.commit_hash.is_empty() {
+            "uncommitted".to_string()
+        } else {
+            e.commit_hash.clone()
+        };
+        if !by_commit.contains_key(&key) {
+            seen_commits.push(key.clone());
+        }
+        by_commit.entry(key).or_default().push(i);
+    }
+
+    let display_commits = seen_commits.iter().take(args.limit);
 
     println!();
     println!(
-        "  {} — last {} entries\n",
+        "  {} — last {} commits\n",
         "agentdiff log".cyan().bold(),
         args.limit
     );
 
-    for e in display_entries {
-        let agent_color = crate::util::agent_color_str(&e.agent);
-        let commit = if e.commit_hash.len() > 8 {
-            &e.commit_hash[..8]
+    for commit_key in display_commits {
+        let idxs = &by_commit[commit_key];
+        let first = &entries[idxs[0]];
+
+        let commit_short = if commit_key == "uncommitted" {
+            "untracked".to_string()
+        } else if commit_key.len() > 8 {
+            commit_key[..8].to_string()
         } else {
-            &e.commit_hash
+            commit_key.clone()
         };
-        let uncommitted = if !e.committed {
+
+        let uncommitted = if !first.committed {
             " (uncommitted)".yellow()
         } else {
             "".normal()
         };
 
         println!(
-            "  {} {} {:<12} {} → {}{}",
-            commit.dimmed(),
-            fmt_time(&e.timestamp.to_rfc3339()),
-            agent_color,
-            e.tool.dimmed(),
-            e.file,
+            "  {} {}{}",
+            commit_short.dimmed(),
+            fmt_time(&first.timestamp.to_rfc3339()),
             uncommitted
         );
 
+        // Group files by agent within this commit.
+        let mut agent_files: HashMap<&str, Vec<&str>> = HashMap::new();
+        for &i in idxs {
+            let e = &entries[i];
+            agent_files.entry(e.agent.as_str()).or_default().push(e.file.as_str());
+        }
+
+        if agent_files.len() > 1 {
+            // Multi-agent commit — show each agent with their files.
+            let mut agents: Vec<&str> = agent_files.keys().copied().collect();
+            agents.sort();
+            for agent in agents {
+                let files = &agent_files[agent];
+                let agent_col = crate::util::agent_color_str(agent);
+                let file_list = if files.len() <= 3 {
+                    files.join(", ")
+                } else {
+                    format!("{} +{} more", files[..3].join(", "), files.len() - 3)
+                };
+                println!("    {} {}", agent_col, file_list.dimmed());
+            }
+        } else {
+            // Single agent — compact file list.
+            let (agent, files) = agent_files.iter().next().unwrap();
+            let agent_col = crate::util::agent_color_str(agent);
+            let file_list = if files.len() <= 4 {
+                files.join(", ")
+            } else {
+                format!("{} +{} more", files[..4].join(", "), files.len() - 4)
+            };
+            println!("    {} {}", agent_col, file_list.dimmed());
+        }
+
         if args.full_prompt {
-            if let Some(ref prompt) = e.prompt {
+            if let Some(ref prompt) = first.prompt {
                 if !prompt.is_empty() && prompt != "unknown" {
                     println!("    Prompt: {}", fmt_prompt(prompt, 80));
                 }
             }
         }
 
-        println!(
-            "    Lines: {} | Model: {}",
-            fmt_lines(&e.lines),
-            e.model.dimmed()
-        );
+        println!();
     }
 
-    println!();
     Ok(())
 }

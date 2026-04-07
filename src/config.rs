@@ -39,7 +39,7 @@ fn default_schema() -> String {
 }
 
 fn default_auto_amend_ledger() -> bool {
-    true
+    false
 }
 
 impl Default for Config {
@@ -50,7 +50,7 @@ impl Default for Config {
             scripts_dir: None,
             repos: Vec::new(),
             agent_aliases: std::collections::HashMap::new(),
-            auto_amend_ledger: true,
+            auto_amend_ledger: false,
         }
     }
 }

@@ -176,8 +176,10 @@ def main() -> int:
         run(["git", "add", "mcp-smoke.txt"], cwd=repo)
         run(["git", "commit", "-m", "test: mcp smoke"], cwd=repo)
 
-        ledger = repo / ".agentdiff" / "ledger.jsonl"
-        rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines() if x.strip()]
+        # finalize-ledger.py writes to refs/heads/agentdiff-meta:ledger.jsonl via git
+        # plumbing (not to disk) when git is available. Read from there.
+        ledger_result = run(["git", "show", "agentdiff-meta:ledger.jsonl"], cwd=repo)
+        rows = [json.loads(x) for x in ledger_result.stdout.splitlines() if x.strip()]
         if not rows:
             raise RuntimeError("ledger.jsonl is empty after commit")
         entry = rows[-1]

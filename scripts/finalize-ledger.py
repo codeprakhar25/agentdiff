@@ -150,9 +150,9 @@ def sha_exists_on_disk(ledger_path: str, sha: str) -> bool:
 
 
 def main() -> int:
-    if len(sys.argv) < 5:
+    if len(sys.argv) < 4:
         print(
-            "usage: finalize-ledger.py <repo_root> <pending_ledger> <pending_context> <ledger_path>",
+            "usage: finalize-ledger.py <repo_root> <pending_ledger> <pending_context> [<ledger_path>]",
             file=sys.stderr,
         )
         return 2
@@ -160,7 +160,8 @@ def main() -> int:
     repo_root = os.path.abspath(sys.argv[1])
     pending_ledger_path = os.path.abspath(sys.argv[2])
     pending_context_path = os.path.abspath(sys.argv[3])
-    ledger_path = os.path.abspath(sys.argv[4])
+    # ledger_path is optional — only used as fallback when git ref write fails.
+    ledger_path = os.path.abspath(sys.argv[4]) if len(sys.argv) >= 5 else None
 
     if not os.path.exists(os.path.join(repo_root, ".git")):
         return 0
@@ -183,7 +184,7 @@ def main() -> int:
             remove_if_exists(pending_ledger_path)
             remove_if_exists(pending_context_path)
             return 0
-    elif sha_exists_on_disk(ledger_path, sha):
+    elif ledger_path and sha_exists_on_disk(ledger_path, sha):
         remove_if_exists(pending_ledger_path)
         remove_if_exists(pending_context_path)
         return 0
@@ -230,7 +231,12 @@ def main() -> int:
         remove_if_exists(pending_context_path)
         return 0
 
-    # Fallback: append to working-tree ledger.jsonl.
+    # Fallback: append to working-tree ledger.jsonl (only when path is provided).
+    if not ledger_path:
+        remove_if_exists(pending_ledger_path)
+        remove_if_exists(pending_context_path)
+        return 1  # git ref write failed and no disk fallback configured
+
     parent = os.path.dirname(ledger_path)
     if parent:
         os.makedirs(parent, exist_ok=True)

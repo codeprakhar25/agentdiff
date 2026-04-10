@@ -42,7 +42,7 @@ pub enum Command {
     /// Show chronological history of AI contributions
     Log(LogArgs),
 
-    /// Show one ledger entry by commit SHA
+    /// Show one trace entry by UUID or commit SHA
     Show(ShowArgs),
 
     /// Ledger maintenance commands
@@ -53,6 +53,34 @@ pub enum Command {
 
     /// Manage global and repo-level configuration
     Config(ConfigArgs),
+
+    /// Manage local signing keypair
+    Keys(KeysArgs),
+
+    /// Verify ledger entry signatures
+    Verify(VerifyArgs),
+
+    /// Evaluate agentdiff policy rules
+    Policy(PolicyArgs),
+
+    /// Export ledger in alternative formats (e.g., Agent Trace JSONL)
+    Export(ExportArgs),
+
+    /// Show current agentdiff health (hooks, keys, traces)
+    Status,
+
+    /// Push local traces to per-branch ref on origin
+    Push(PushArgs),
+
+    /// Consolidate per-branch ref traces into agentdiff-meta (used by CI)
+    Consolidate(ConsolidateArgs),
+
+    /// Legacy: import ledger.jsonl into agentdiff-meta
+    Migrate,
+
+    /// [internal] Sign the last trace entry — called by the post-commit hook
+    #[command(hide = true)]
+    SignEntry,
 }
 
 #[derive(Args, Debug)]
@@ -199,8 +227,30 @@ pub struct LogArgs {
 
 #[derive(Args, Debug)]
 pub struct ShowArgs {
-    /// Full SHA or SHA prefix from .agentdiff/ledger.jsonl
+    /// UUID or commit SHA prefix to look up
     pub sha: String,
+}
+
+#[derive(Args, Debug)]
+pub struct PushArgs {
+    /// Branch to push traces for (default: current branch)
+    #[arg(long)]
+    pub branch: Option<String>,
+
+    /// Suppress output
+    #[arg(long)]
+    pub quiet: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct ConsolidateArgs {
+    /// Branch whose traces to consolidate into agentdiff-meta
+    #[arg(long)]
+    pub branch: Option<String>,
+
+    /// Also push agentdiff-meta and delete the remote per-branch ref
+    #[arg(long)]
+    pub push: bool,
 }
 
 #[derive(Args, Debug)]
@@ -240,4 +290,81 @@ pub enum ReportFormat {
     Markdown,
     Annotations,
     Both,
+}
+
+// ── Keys ─────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct KeysArgs {
+    #[command(subcommand)]
+    pub action: KeysAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum KeysAction {
+    /// Generate a new local ed25519 signing keypair
+    Init,
+    /// Register the local public key in the git key registry (refs/agentdiff/keys/)
+    Register,
+    /// Rotate the local keypair: back up the old keys, generate new ones, and register them
+    Rotate,
+}
+
+// ── Verify ────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct VerifyArgs {
+    /// Verify only entries after this commit SHA (default: git merge-base with main)
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Treat missing signatures as hard failures (exit 1 immediately)
+    #[arg(long)]
+    pub strict: bool,
+}
+
+// ── Policy ────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct PolicyArgs {
+    #[command(subcommand)]
+    pub action: PolicyAction,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PolicyAction {
+    /// Evaluate policy rules against current ledger
+    Check(PolicyCheckArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct PolicyCheckArgs {
+    /// Only evaluate commits after this SHA (default: git merge-base with main)
+    #[arg(long)]
+    pub since: Option<String>,
+
+    /// Output format: text | github-annotations
+    #[arg(long, default_value = "text")]
+    pub format: PolicyFormat,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum PolicyFormat {
+    Text,
+    GithubAnnotations,
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    /// Output format
+    #[arg(long, default_value = "agent-trace")]
+    pub format: ExportFormat,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum)]
+pub enum ExportFormat {
+    /// Cognition Agent Trace JSONL (specVersion 0.1)
+    AgentTrace,
 }

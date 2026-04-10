@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod data;
 mod init;
+mod keys;
 mod store;
 mod util;
 
@@ -12,6 +13,11 @@ use cli::{Cli, Command};
 use config::Config;
 
 fn main() -> anyhow::Result<()> {
+    // Suppress broken pipe errors (e.g. `agentdiff export | head`).
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
 
     let config = Config::load().context("loading config")?;
@@ -19,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     // Commands that don't require a git repository.
     let no_repo_needed = matches!(
         &cli.command,
-        Command::Config(_) | Command::Configure(_)
+        Command::Config(_) | Command::Configure(_) | Command::Keys(_)
     );
 
     // Resolve repo root
@@ -71,5 +77,18 @@ fn main() -> anyhow::Result<()> {
         Command::Ledger(args) => commands::ledger::run(&store, &args),
         Command::SyncNotes => commands::sync_notes::run(&store),
         Command::Config(args) => commands::config_cmd::run(&config, &args),
+        Command::Keys(args) => match args.action {
+            cli::KeysAction::Init => commands::keys::run_init(),
+            cli::KeysAction::Register => commands::keys::run_register(&store),
+            cli::KeysAction::Rotate => commands::keys::run_rotate(&store),
+        },
+        Command::Verify(args) => commands::verify::run(&store, &args),
+        Command::Policy(args) => commands::policy::run(&store, &args.action),
+        Command::Export(args) => commands::export::run(&store, &args),
+        Command::Status => commands::status::run(&store),
+        Command::Push(args) => commands::push::run(&store, &args),
+        Command::Consolidate(args) => commands::consolidate::run(&store, &args),
+        Command::Migrate => commands::migrate::run(&store),
+        Command::SignEntry => commands::sign_entry::run(&store),
     }
 }

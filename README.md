@@ -87,8 +87,18 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 | `agentdiff stats` | Aggregate stats by agent, model, file |
 | `agentdiff log` | Chronological AI contribution history |
 | `agentdiff diff [<sha>]` | Attribution diff for a commit or range |
-| `agentdiff show <sha>` | Full details for one commit |
+| `agentdiff show <sha>` | Full details for one trace entry |
 | `agentdiff report` | CI report in Markdown or GitHub annotations |
+| `agentdiff status` | Health check — hooks, keys, traces |
+| `agentdiff push` | Push local traces to per-branch ref on origin |
+| `agentdiff consolidate` | Merge per-branch traces into permanent store (CI) |
+| `agentdiff verify` | Verify ed25519 signatures on trace entries |
+| `agentdiff keys init` | Generate a local signing keypair |
+| `agentdiff keys register` | Register your public key in the git key registry |
+| `agentdiff keys rotate` | Rotate your keypair and register the new key |
+| `agentdiff policy check` | Enforce AI attribution policy rules |
+| `agentdiff export` | Export traces in Agent Trace JSONL format |
+| `agentdiff migrate` | Import legacy ledger.jsonl into new storage |
 | `agentdiff config` | Manage global configuration |
 
 <details>
@@ -114,6 +124,20 @@ agentdiff report --format annotations --out-annotations annotations.json
 
 # Attribution diff for last 3 commits
 agentdiff diff HEAD~3
+
+# Verify signatures since merge-base with main
+agentdiff verify
+agentdiff verify --since abc1234 --strict
+
+# Policy check (reads .agentdiff/policy.toml)
+agentdiff policy check
+agentdiff policy check --format github-annotations
+
+# Push traces from current branch to GitHub
+agentdiff push
+
+# Consolidate a branch's traces into permanent store (CI step)
+agentdiff consolidate --branch feature/my-branch --push
 
 # Skip specific agents during configure
 agentdiff configure --no-copilot --no-antigravity
@@ -181,6 +205,18 @@ Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all in
 </details>
 
 <details>
+<summary>agentdiff verify</summary>
+
+```
+  ok 550e8400 — valid
+  ok b2c3d4e5 — valid
+  warn d4e5f6a7 — no signature
+  Verified 4 entries: 3 valid, 1 missing sig, 0 invalid
+```
+
+</details>
+
+<details>
 <summary>agentdiff report (Markdown)</summary>
 
 ```markdown
@@ -223,7 +259,7 @@ Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks w
 
 **2. `agentdiff init` — per-repo setup**
 
-Installs git `pre-commit` and `post-commit` hooks in `<repo>/.git/hooks/`, creates `.agentdiff/ledger.jsonl`, and registers the repo in `~/.agentdiff/config.toml`.
+Installs git `pre-commit`, `post-commit`, and `pre-push` hooks. Configures a `refs/agentdiff/*` fetch refspec so teammates' traces are visible after `git fetch`.
 
 **3. Capture flow**
 
@@ -242,30 +278,160 @@ When an AI agent makes an edit, its hook fires and writes a JSON entry to `<repo
 }
 ```
 
-**4. Commit**
+**4. Commit → sign → push**
 
 On `git commit`:
 - Pre-commit hook: matches session entries against staged diff → writes `pending-ledger.json`
-- Post-commit hook: finalizes one ledger line with the commit SHA → appends to `.agentdiff/ledger.jsonl`
-- By default, auto-amends the commit to include the updated ledger
+- Post-commit hook: finalizes one trace entry (UUID-keyed, Agent Trace v0.1 format) into the local buffer at `.git/agentdiff/traces/{branch}.jsonl`; signs it with ed25519 if keys are configured
 
-**5. Query**
+On `git push`:
+- Pre-push hook: uploads the local trace buffer to `refs/agentdiff/traces/{branch}` on origin via the GitHub Git Database API; auto-consolidates on direct pushes to main/master
+
+**5. Three-tier storage**
+
+```
+Tier 1 — local buffer (ephemeral)
+  .git/agentdiff/traces/{branch}.jsonl
+
+Tier 2 — per-branch ref (on GitHub, per developer)
+  refs/agentdiff/traces/{branch}:traces.jsonl
+
+Tier 3 — permanent meta store (consolidated by CI)
+  refs/agentdiff/meta:traces.jsonl
+```
+
+The `refs/agentdiff/*` namespace sits outside `refs/heads/*`, so branch protection rules never block it. UUIDs survive squash/rebase/cherry-pick — a trace is never lost due to SHA rewriting.
+
+**6. Key registry**
+
+Signing keys are registered per-developer in `refs/agentdiff/keys/{key_id}:pub.key`. `agentdiff verify` looks up each signature's `key_id` in the registry, so you can verify traces signed by any team member's key without manually exchanging public keys.
+
+**7. Directory layout**
 
 ```
 ~/.agentdiff/
 ├── config.toml           ← global config
+├── keys/
+│   ├── private.key       ← ed25519 signing key (chmod 600)
+│   └── public.key        ← ed25519 verifying key
 └── scripts/              ← capture scripts (Python)
 
 <repo>/.agentdiff/
-└── ledger.jsonl          ← committed, append-only attribution log
+└── policy.toml           ← optional policy rules
 
 <repo>/.git/agentdiff/
 ├── session.jsonl         ← live capture buffer (not committed)
 ├── pending.json          ← MCP context handoff (ephemeral)
-└── pending-ledger.json   ← pre-commit snapshot (ephemeral)
+├── pending-ledger.json   ← pre-commit snapshot (ephemeral)
+└── traces/
+    └── {branch}.jsonl    ← local trace buffer (pushed by pre-push hook)
 ```
 
 </details>
+
+---
+
+## Signing & Verification
+
+agentdiff can sign each trace entry with an ed25519 key so tampering is detectable:
+
+```bash
+# One-time setup per developer
+agentdiff keys init
+
+# Register your public key so teammates can verify your signatures
+agentdiff keys register
+
+# Rotate keys (backs up old keys, generates new ones, registers them)
+agentdiff keys rotate
+
+# Verify the current branch's trace history
+agentdiff verify
+
+# Strict mode — exit immediately on any missing or invalid signature
+agentdiff verify --strict
+
+# Verify a specific range
+agentdiff verify --since abc1234
+```
+
+Each trace record stores `sig.key_id` (first 16 hex chars of SHA-256 of the public key). `agentdiff verify` looks up the matching key from the git key registry (`refs/agentdiff/keys/{key_id}`) — no manual key exchange required.
+
+---
+
+## Policy Enforcement
+
+Define AI attribution rules in `.agentdiff/policy.toml`:
+
+```toml
+# Fail CI if AI wrote more than 80% of lines in this PR
+max_ai_percent = 80.0
+
+# Every trace must have at least one attributed file
+require_attribution = true
+
+# Every trace must carry an ed25519 signature
+require_signed = true
+
+# Override the default branch for merge-base calculation
+# base_branch = "develop"
+```
+
+Run in CI:
+
+```bash
+agentdiff policy check
+agentdiff policy check --format github-annotations  # inline PR annotations
+```
+
+Exits 0 on pass, 1 on violation. Use `--since <sha>` to scope to a specific range.
+
+---
+
+## CI Integration
+
+**Full pipeline** — report, verify, and enforce policy on every PR:
+
+```yaml
+# .github/workflows/agentdiff.yml
+on: [pull_request]
+
+jobs:
+  agentdiff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install agentdiff
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Init repo
+        run: agentdiff init --no-git-hook
+
+      - name: Fetch agentdiff refs
+        run: git fetch origin 'refs/agentdiff/*:refs/agentdiff/*'
+
+      - name: Consolidate traces
+        run: agentdiff consolidate --branch ${{ github.head_ref }} --push
+
+      - name: Verify signatures
+        run: agentdiff verify
+
+      - name: Policy check
+        run: agentdiff policy check --format github-annotations
+
+      - name: Generate report
+        run: agentdiff report --format markdown --out-md ai-report.md
+
+      - name: Post as PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: ai-report.md
+```
 
 ---
 
@@ -325,37 +491,6 @@ When an agent calls `record_context`, the prompt, model, session ID, files read,
 
 ---
 
-## CI Integration
-
-Add AI attribution to your pull requests with one workflow step:
-
-```yaml
-# .github/workflows/agentdiff-report.yml
-on: [pull_request]
-
-jobs:
-  report:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Install agentdiff
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-      - name: Init repo (no agent hooks needed in CI)
-        run: agentdiff init --no-git-hook
-      - name: Generate report
-        run: agentdiff report --format markdown --out-md ai-report.md
-      - name: Post as PR comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: ai-report.md
-```
-
----
-
 ## Debugging
 
 ```bash
@@ -369,6 +504,9 @@ tail -f ~/.agentdiff/logs/capture-codex.log
 
 # Check what was captured before committing
 cat .git/agentdiff/session.jsonl
+
+# Check agentdiff health (hooks, keys, pending traces)
+agentdiff status
 ```
 
 ---

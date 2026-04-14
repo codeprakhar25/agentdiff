@@ -136,11 +136,12 @@ def event_overlaps_staged(event: dict, lines_by_file: Dict[str, List[Tuple[int, 
     return False
 
 
-# Agents with targeted capture hooks (reliable attribution signal).
-# Copilot fires on every document change in VS Code, including edits by
-# Claude, Codex, Windsurf, and human typing — so it is treated as a
-# low-confidence signal that must yield to any targeted agent.
-_NOISY_AGENTS = {"copilot"}
+# Agents completely excluded from winning per-file attribution.
+# Copilot fires on every VS Code document change — including edits by other
+# AI agents running in the terminal and normal human typing. Letting it win
+# attribution would mask real sources. We keep capturing its events in
+# session.jsonl (for usage stats) but never let it claim a file.
+_EXCLUDED_AGENTS = {"copilot"}
 
 
 def read_events_per_file(
@@ -155,10 +156,9 @@ def read_events_per_file(
     touched different files in the same session window each file gets its
     own correct attribution instead of a single winner-takes-all event.
 
-    When both a targeted agent (claude-code, cursor, codex, windsurf, …) and
-    copilot have events for the same file, the targeted agent wins regardless
-    of timestamp — copilot's VS Code extension fires on *all* document changes
-    and would otherwise drown out the real source.
+    Excluded agents (copilot) are skipped entirely — the most recent
+    non-excluded agent wins per file. If only excluded agents have events
+    for a file, no event is returned and the file gets human attribution.
     """
     if not os.path.exists(path):
         return {}
@@ -185,17 +185,13 @@ def read_events_per_file(
                     continue
 
                 agent = str(event.get("agent") or "human")
-                prev_ts, prev_ev = best.get(file_path, (0, None))
-                prev_agent = str(prev_ev.get("agent") or "human") if prev_ev else ""
+                # Never attribute to excluded agents, even as a last resort.
+                if agent in _EXCLUDED_AGENTS:
+                    continue
 
-                if prev_agent in _NOISY_AGENTS and agent not in _NOISY_AGENTS:
-                    # Targeted agent always overrides copilot.
-                    best[file_path] = (event_ts, event)
-                elif prev_agent not in _NOISY_AGENTS and prev_agent and agent in _NOISY_AGENTS:
-                    # Never let copilot overwrite a targeted agent.
-                    pass
-                elif event_ts >= prev_ts:
-                    # Same tier — most recent wins.
+                prev_ts, _ = best.get(file_path, (0, None))
+                if event_ts >= prev_ts:
+                    # Most recent non-excluded agent wins per file.
                     best[file_path] = (event_ts, event)
     except Exception:
         return {}

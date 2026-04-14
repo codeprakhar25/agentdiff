@@ -17,15 +17,17 @@
 agentdiff hooks into every major AI coding agent — Claude Code, Cursor, Codex, Copilot, Windsurf, OpenCode, Gemini — and writes a permanent, commit-scoped attribution record to your repository. Each record captures the agent name, model, prompt excerpt, and exact line ranges. All of it queryable from the CLI, no server required.
 
 ```
-agentdiff stats
+agentdiff list
 
-  Total lines tracked: 4,231
+  agentdiff list — 5 entries
 
-  By Agent:
-    claude-code   2,741 (65%) ████████████████████
-    cursor          973 (23%) ███████
-    copilot         353  (8%) ███
-    human           164  (4%) █
+  #    COMMIT     TIME          AGENT          MODEL                  FILE(S)                          LINES              TRUST    PROMPT
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  1    a1b2c3d4   Apr 14 09:12  claude-code    claude-sonnet-4-6      src/commands/push.rs             1-47               92       "fix ordering: write local ref before…"
+  2    b2c3d4e5   Apr 14 09:44  codex          o4-mini                src/store.rs +2                  112-198, 201-230   —        "add fetch_ref_content helper"
+  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add remote-status args struct"
+  4    d4e5f6a7   Apr 13 17:30  opencode       claude-sonnet-4-6      src/main.rs                      80-94              88       "wire remote_status dispatch"
+  5    e5f6a7b8   Apr 13 14:22  human          —                      README.md                        —                 —        —
 ```
 
 ---
@@ -98,6 +100,7 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 | `agentdiff keys rotate` | Rotate your keypair and register the new key |
 | `agentdiff policy check` | Enforce AI attribution policy rules |
 | `agentdiff export` | Export traces in Agent Trace JSONL format |
+| `agentdiff remote-status` | Show remote trace ref state (`refs/agentdiff/*` on origin) |
 | `agentdiff migrate` | Import legacy ledger.jsonl into new storage |
 | `agentdiff config` | Manage global configuration |
 
@@ -144,6 +147,10 @@ agentdiff configure --no-copilot --no-antigravity
 
 # Skip git hook install during init
 agentdiff init --no-git-hook
+
+# Check remote trace ref state after pushing
+agentdiff remote-status
+agentdiff remote-status --no-fetch   # fast: show refs + SHAs only, skip trace counts
 ```
 
 </details>
@@ -168,19 +175,73 @@ Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all in
 
 ## Example Output
 
+```
+agentdiff list
+
+  agentdiff list — 6 entries
+
+  #    COMMIT     TIME          AGENT          MODEL                  FILE(S)                          LINES              TRUST    PROMPT
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  1    a1b2c3d4   Apr 14 09:12  claude-code    claude-sonnet-4-6      src/commands/push.rs             1-47               92       "fix ordering: write local ref befor…"
+  2    b2c3d4e5   Apr 14 09:44  codex          o4-mini                src/store.rs +2                  112-198, 201-230   —        "add fetch_ref_content helper"
+  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add remote-status args struct"
+  4    d4e5f6a7   Apr 13 17:30  opencode       claude-sonnet-4-6      src/main.rs                      80-94              88       "wire remote_status dispatch"
+  5    e5f6a7b8   Apr 12 11:04  windsurf       claude-sonnet-4-6      src/init.rs                      44-68              —        "remove legacy .agentdiff dir creat…"
+  6    f6a7b8c9   Apr 11 16:22  human          —                      README.md                        —                  —        —
+```
+
 <details>
-<summary>agentdiff list</summary>
+<summary>agentdiff list flags</summary>
+
+```bash
+# Filter to a specific agent
+agentdiff list --agent claude-code
+
+# Filter to files matching a path substring
+agentdiff list --file src/commands
+
+# Show the 10 most recent entries
+agentdiff list -n 10
+
+# Show only uncommitted (in-progress session) entries
+agentdiff list --uncommitted
+```
+
+</details>
+
+<details>
+<summary>agentdiff stats</summary>
 
 ```
-  agentdiff list — 5 entries
+  agentdiff stats — 4,231 lines tracked
 
-  #   COMMIT     TIME          AGENT         MODEL           FILES  LINES   PROMPT
-  ──────────────────────────────────────────────────────────────────────────────────────────────────
-  1   a1b2c3d4   Mar 20 17:52  claude-code   sonnet-4-6      1      17-24   "add auth middleware"
-  2   b2c3d4e5   Mar 20 18:10  cursor        cursor-fast     2      1, 44   "refactor utils module"
-  3   c3d4e5f6   Mar 20 18:45  copilot       gpt-4o          1      10-12   —
-  4   d4e5f6a7   Mar 20 19:01  codex         o4-mini         3      1-89    "migrate to new API"
-  *   (pending)  Mar 20 19:14  claude-code   sonnet-4-6      1      5-31    "add tests"  (uncommitted)
+  By Agent:
+    claude-code   2,741 (65%) ████████████████████
+    codex           892 (21%) ███████
+    opencode        282  (7%) ██
+    cursor          148  (3%) █
+    human           168  (4%) █
+
+  By Model:
+    claude-sonnet-4-6   3,023 (72%)
+    o4-mini               892 (21%)
+    cursor-fast           148  (3%)
+    —                     168  (4%)
+```
+
+</details>
+
+<details>
+<summary>agentdiff remote-status</summary>
+
+```
+  agentdiff remote-status — github.com/org/repo
+
+  REF                                           TRACES     LOCAL
+  ────────────────────────────────────────────────────────────────────────────
+  refs/agentdiff/meta                           18         synced
+  refs/agentdiff/traces/main                    6          synced
+  refs/agentdiff/traces/feature%2Fauth-rewrite  3          synced
 ```
 
 </details>

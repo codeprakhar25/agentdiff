@@ -1245,10 +1245,5 @@ fn step_register_repo(repo_root: &Path, config: &mut Config) -> Result<()> {
     }
 
     fs::create_dir_all(Config::repo_session_dir(repo_root))?;
-    fs::create_dir_all(Config::repo_ledger_dir(repo_root))?;
-    let ledger = Config::repo_ledger_path(repo_root);
-    if !ledger.exists() {
-        fs::write(&ledger, "")?;
-    }
     Ok(())
 }

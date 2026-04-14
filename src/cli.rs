@@ -78,6 +78,9 @@ pub enum Command {
     /// Legacy: import ledger.jsonl into agentdiff-meta
     Migrate,
 
+    /// Show remote agentdiff ref state (refs/agentdiff/* on origin)
+    RemoteStatus(RemoteStatusArgs),
+
     /// [internal] Sign the last trace entry — called by the post-commit hook
     #[command(hide = true)]
     SignEntry,
@@ -240,6 +243,13 @@ pub struct PushArgs {
     /// Suppress output
     #[arg(long)]
     pub quiet: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct RemoteStatusArgs {
+    /// Only show ref names and SHAs; skip fetching trace counts (fast)
+    #[arg(long)]
+    pub no_fetch: bool,
 }
 
 #[derive(Args, Debug)]

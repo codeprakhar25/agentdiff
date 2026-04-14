@@ -48,18 +48,22 @@ pub fn run(store: &Store, args: &ConsolidateArgs) -> Result<()> {
         eprintln!("{} could not delete local ref: {e}", "warn".yellow());
     }
 
-    // Push meta ref via GitHub API + delete remote per-branch ref.
-    // Uses push_content_to_ref (not git push) so refs/agentdiff/* namespace
-    // is not blocked by branch protection rules.
+    // Best-effort push to GitHub via the Git Database API + delete remote per-branch ref.
+    // Non-fatal: local repos (no GitHub remote) or unauthenticated machines will fail
+    // here; the local refs/agentdiff/meta is already written and remains correct.
     if args.push {
-        store::push_content_to_ref(
+        if let Err(e) = store::push_content_to_ref(
             &store.repo_root,
             "refs/agentdiff/meta",
             "traces.jsonl",
             &jsonl,
             &format!("agentdiff: consolidate {branch} ({new_count} traces)"),
-        )?;
-        if let Err(e) = store::delete_remote_ref(&store.repo_root, &ref_name) {
+        ) {
+            let msg = e.to_string();
+            if !msg.contains("not a GitHub URL") {
+                eprintln!("{} could not push meta ref to GitHub: {e}", "warn".yellow());
+            }
+        } else if let Err(e) = store::delete_remote_ref(&store.repo_root, &ref_name) {
             eprintln!("{} could not delete remote ref: {e}", "warn".yellow());
         }
     }

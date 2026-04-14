@@ -89,6 +89,7 @@ fn main() -> anyhow::Result<()> {
         Command::Push(args) => commands::push::run(&store, &args),
         Command::Consolidate(args) => commands::consolidate::run(&store, &args),
         Command::Migrate => commands::migrate::run(&store),
+        Command::RemoteStatus(args) => commands::remote_status::run(&store, &args),
         Command::SignEntry => commands::sign_entry::run(&store),
     }
 }

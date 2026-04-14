@@ -10,6 +10,7 @@ pub mod log;
 pub mod migrate;
 pub mod policy;
 pub mod push;
+pub mod remote_status;
 pub mod report;
 pub mod show;
 pub mod sign_entry;

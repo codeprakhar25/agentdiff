@@ -52,18 +52,10 @@ pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
     let new_count = new_traces.len();
     remote_traces.extend(new_traces);
 
-    // Push all traces to GitHub via Git Database API (blob → tree → commit → ref)
     let jsonl = store::traces_to_jsonl(&remote_traces)?;
-    store::push_content_to_ref(
-        &store.repo_root,
-        &ref_name,
-        "traces.jsonl",
-        &jsonl,
-        &format!("agentdiff: traces for {branch}"),
-    )?;
 
-    // Mirror the merged content to the local ref so that `agentdiff consolidate`
-    // (which reads via git-show) can run immediately without a separate git fetch.
+    // Always write the local ref first — consolidate reads from this ref and
+    // it must be present even when there is no GitHub remote.
     let _ = store::write_to_ref(
         &store.repo_root,
         &ref_name,
@@ -71,6 +63,23 @@ pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
         &jsonl,
         &format!("agentdiff: traces for {branch}"),
     );
+
+    // Best-effort push to GitHub via the Git Database API.
+    // Non-fatal: local repos (no GitHub remote) or unauthenticated machines
+    // will fail here but the local ref is already updated above.
+    if let Err(e) = store::push_content_to_ref(
+        &store.repo_root,
+        &ref_name,
+        "traces.jsonl",
+        &jsonl,
+        &format!("agentdiff: traces for {branch}"),
+    ) {
+        // Suppress "not a GitHub URL" noise for local repos; warn on real errors.
+        let msg = e.to_string();
+        if !msg.contains("not a GitHub URL") && !args.quiet {
+            eprintln!("agentdiff: warn — could not push traces to GitHub: {e}");
+        }
+    }
 
     if !args.quiet {
         println!(

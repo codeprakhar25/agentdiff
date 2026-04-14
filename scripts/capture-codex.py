@@ -137,6 +137,57 @@ def collect_changed_lines(repo_root: str) -> Dict[str, List[int]]:
     return {k: sorted(set(v)) for k, v in result.items() if v}
 
 
+def get_dirty_file_names(repo_root: str) -> List[str]:
+    """Return repo-relative paths of all files currently differing from HEAD."""
+    try:
+        out = subprocess.run(
+            ["git", "diff", "HEAD", "--name-only"],
+            capture_output=True, text=True, cwd=repo_root,
+        )
+        if out.returncode != 0:
+            return []
+        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+    except Exception:
+        return []
+
+
+def pre_task_state_path(repo_root: str) -> str:
+    return os.path.join(repo_root, ".git", "agentdiff", "codex-pre-task.json")
+
+
+def save_pre_task_state(repo_root: str) -> None:
+    """Snapshot current dirty-file list so task_complete can isolate codex's changes."""
+    dirty = get_dirty_file_names(repo_root)
+    state_path = pre_task_state_path(repo_root)
+    try:
+        os.makedirs(os.path.dirname(state_path), exist_ok=True)
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump({"files": sorted(dirty)}, f)
+        debug_log(f"pre-task snapshot: {len(dirty)} dirty files → {state_path}")
+    except Exception as e:
+        debug_log(f"pre-task snapshot failed: {e}")
+
+
+def load_and_consume_pre_task_state(repo_root: str) -> set:
+    """Load and delete the pre-task snapshot; returns set of pre-existing dirty files."""
+    state_path = pre_task_state_path(repo_root)
+    pre_dirty: set = set()
+    if not os.path.exists(state_path):
+        return pre_dirty
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        pre_dirty = set(data.get("files", []))
+        debug_log(f"pre-task loaded: {len(pre_dirty)} pre-existing dirty files")
+    except Exception as e:
+        debug_log(f"pre-task load failed: {e}")
+    try:
+        os.unlink(state_path)
+    except Exception:
+        pass
+    return pre_dirty
+
+
 def is_git_repo(path: str) -> bool:
     return bool(path) and os.path.exists(os.path.join(path, ".git"))
 
@@ -499,10 +550,24 @@ def main() -> int:
         cwd, model, session_id, turn_id, prompt, event_name = extract_codex_context(events)
         debug_log(f"event_name={event_name!r} turn_id={turn_id!r} cwd_from_events={cwd!r}")
 
-        # Skip events that definitely aren't edits.
+        # task_started: snapshot dirty files so task_complete can isolate what codex changed.
+        task_started_events = {"task_started", "TaskStarted"}
+        if event_name and event_name in task_started_events:
+            debug_log(f"task_started: saving pre-task state")
+            # Resolve repo root for snapshot (best-effort — use event cwd or process cwd).
+            snap_candidates: List[str] = []
+            append_unique(snap_candidates, cwd if isinstance(cwd, str) else "")
+            append_unique(snap_candidates, os.getcwd())
+            for candidate in snap_candidates:
+                snap_root = find_repo_root(candidate)
+                if is_git_repo(snap_root):
+                    save_pre_task_state(snap_root)
+                    break
+            run_forward(forward_cmd, input_data)
+            return 0
+
+        # Skip other non-edit events.
         known_skip_events = {
-            "task_started",
-            "TaskStarted",
             "turn_aborted",
             "TurnAborted",
             "agent-turn-start",
@@ -535,6 +600,20 @@ def main() -> int:
             debug_log("skip: no changed lines found in any candidate repo")
             run_forward(forward_cmd, input_data)
             return 0
+
+        # Filter out files that were already dirty before this codex task started.
+        # This prevents codex from claiming attribution for changes made by other
+        # agents (claude-code, opencode, etc.) that were pending at task_started.
+        pre_task_files = load_and_consume_pre_task_state(repo_root) if repo_root else set()
+        if pre_task_files:
+            changed = {f: lines for f, lines in changed.items() if f not in pre_task_files}
+            debug_log(
+                f"post-filter: {len(changed)} files after excluding {len(pre_task_files)} pre-task dirty files"
+            )
+            if not changed:
+                debug_log("skip: all changed files were pre-existing dirty (not codex's work)")
+                run_forward(forward_cmd, input_data)
+                return 0
 
         if not chosen_cwd:
             chosen_cwd = cwd or os.getcwd()

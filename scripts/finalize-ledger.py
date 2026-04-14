@@ -6,14 +6,19 @@ Writes to the agentdiff-meta branch (enterprise storage, no working-tree
 pollution) via git plumbing. Falls back to appending to ledger.jsonl on disk
 if the git plumbing fails (e.g. first-time setup, no git binary on PATH).
 
+Also writes an AgentTrace record to the local per-branch trace buffer at
+.git/agentdiff/traces/{branch}.jsonl so that `agentdiff list` works without
+needing a push/consolidate first.
+
 Usage:
-  finalize-ledger.py <repo_root> <pending_ledger> <pending_context> <ledger_path>
+  finalize-ledger.py <repo_root> <pending_ledger> <pending_context> [<ledger_path>]
 """
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import uuid as uuid_mod
 from typing import List, Optional
 
 
@@ -139,6 +144,98 @@ def write_to_meta_branch(repo_root: str, new_content: str) -> bool:
                 pass
 
 
+def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> bool:
+    """Append an AgentTrace record to .git/agentdiff/traces/{branch}.jsonl.
+
+    This populates the local trace buffer so `agentdiff list` works immediately
+    after a commit, without needing a push/consolidate first.
+    """
+    # Get current branch name.
+    branch_res = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_root)
+    if branch_res.returncode != 0:
+        return False
+    branch = branch_res.stdout.strip()
+    if not branch or branch == "HEAD":
+        return False
+
+    # Sanitize branch name to match store.rs: replace / with %2F.
+    sanitized = branch.replace("/", "%2F")
+
+    # Ensure traces directory exists.
+    traces_dir = os.path.join(repo_root, ".git", "agentdiff", "traces")
+    os.makedirs(traces_dir, exist_ok=True)
+    traces_path = os.path.join(traces_dir, f"{sanitized}.jsonl")
+
+    # Build per-file trace entries from pending payload.
+    agent = str(pending.get("agent") or "human")
+    model = str(pending.get("model") or "human")
+    attribution = pending.get("attribution") or {}
+    lines_map = pending.get("lines") or {}
+
+    files = []
+    for file_path, ranges in lines_map.items():
+        file_attr = attribution.get(file_path, {})
+        file_agent = str(file_attr.get("agent") or agent)
+        file_model = str(file_attr.get("model") or model)
+
+        contributor_type = "human" if file_agent == "human" else "ai"
+        contributor: dict = {"type": contributor_type}
+        if file_model and file_model != "human":
+            contributor["model_id"] = file_model
+
+        trace_ranges = []
+        for r in ranges:
+            if isinstance(r, (list, tuple)) and len(r) == 2:
+                trace_ranges.append({
+                    "start_line": int(min(r[0], r[1])),
+                    "end_line": int(max(r[0], r[1])),
+                })
+
+        if trace_ranges:
+            files.append({
+                "path": file_path,
+                "conversations": [{
+                    "contributor": contributor,
+                    "ranges": trace_ranges,
+                }],
+            })
+
+    if not files:
+        return True  # Nothing to record, not an error.
+
+    # Build metadata extension block.
+    metadata: dict = {}
+    if pending.get("prompt_excerpt"):
+        metadata["prompt_excerpt"] = str(pending["prompt_excerpt"])
+    if pending.get("prompt_hash"):
+        metadata["prompt_hash"] = str(pending["prompt_hash"])
+    if isinstance(pending.get("trust"), int):
+        metadata["trust"] = pending["trust"]
+    if isinstance(pending.get("flags"), list) and pending["flags"]:
+        metadata["flags"] = pending["flags"]
+    if pending.get("session_id"):
+        metadata["session_id"] = str(pending["session_id"])
+
+    trace: dict = {
+        "version": "0.1.0",
+        "id": str(uuid_mod.uuid4()),
+        "timestamp": ts,
+        "vcs": {"type": "git", "revision": sha},
+        "tool": {"name": agent},
+        "files": files,
+    }
+    if metadata:
+        trace["metadata"] = metadata
+
+    line = json.dumps(trace, separators=(",", ":")) + "\n"
+    try:
+        with open(traces_path, "a", encoding="utf-8") as f:
+            f.write(line)
+        return True
+    except Exception:
+        return False
+
+
 def sha_exists_on_disk(ledger_path: str, sha: str) -> bool:
     if not os.path.exists(ledger_path):
         return False
@@ -223,6 +320,10 @@ def main() -> int:
 
     entry = {k: v for (k, v) in entry.items() if v is not None}
     entry_line = json.dumps(entry, separators=(",", ":")) + "\n"
+
+    # Write AgentTrace format to the local per-branch buffer so that
+    # `agentdiff list` works immediately (no push/consolidate required).
+    write_agent_trace(repo_root, pending, sha, ts)
 
     # Try writing to agentdiff-meta branch (enterprise storage).
     existing = meta_content if meta_content is not None else ""

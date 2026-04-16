@@ -7,10 +7,6 @@ pub struct Config {
     #[serde(default = "default_schema")]
     pub schema_version: String,
 
-    /// Global spillover root — defaults to ~/.agentdiff/spillover
-    #[serde(default)]
-    pub data_dir: Option<PathBuf>,
-
     /// Global scripts dir — defaults to ~/.agentdiff/scripts
     #[serde(default)]
     pub scripts_dir: Option<PathBuf>,
@@ -26,6 +22,11 @@ pub struct Config {
     /// Include .agentdiff/ledger.jsonl in the same commit via post-commit amend.
     #[serde(default = "default_auto_amend_ledger")]
     pub auto_amend_ledger: bool,
+
+    /// When false, prompt excerpts are omitted from trace entries.
+    /// Set to false in environments with sensitive prompt content.
+    #[serde(default = "default_capture_prompts")]
+    pub capture_prompts: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,15 +43,19 @@ fn default_auto_amend_ledger() -> bool {
     false
 }
 
+fn default_capture_prompts() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             schema_version: "1.0".to_string(),
-            data_dir: None,
             scripts_dir: None,
             repos: Vec::new(),
             agent_aliases: std::collections::HashMap::new(),
             auto_amend_ledger: false,
+            capture_prompts: true,
         }
     }
 }
@@ -64,22 +69,11 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Legacy config path from earlier agentblame versions.
+    /// Legacy config path from earlier versions.
     pub fn legacy_config_path() -> PathBuf {
         dirs::home_dir()
             .expect("home dir must exist")
-            .join(".agentblame")
             .join("config.toml")
-    }
-
-    /// Global spillover dir for events captured outside a git repo.
-    pub fn spillover_root(&self) -> PathBuf {
-        self.data_dir.clone().unwrap_or_else(|| {
-            dirs::home_dir()
-                .unwrap()
-                .join(".agentdiff")
-                .join("spillover")
-        })
     }
 
     pub fn scripts_root(&self) -> PathBuf {
@@ -92,7 +86,7 @@ impl Config {
         self.auto_amend_ledger
     }
 
-    /// Derive slug from repo root path: /home/prakh/dev/rust → -home-prakh-dev-rust
+    /// Derive slug from repo root path
     pub fn slug_for(repo_root: &std::path::Path) -> String {
         repo_root.to_string_lossy().replace('/', "-")
     }
@@ -118,14 +112,6 @@ impl Config {
         Self::repo_session_dir(repo_root).join("pending-ledger.json")
     }
 
-    pub fn repo_ledger_dir(repo_root: &std::path::Path) -> PathBuf {
-        repo_root.join(".agentdiff")
-    }
-
-    pub fn repo_ledger_path(repo_root: &std::path::Path) -> PathBuf {
-        Self::repo_ledger_dir(repo_root).join("ledger.jsonl")
-    }
-
     pub fn load() -> anyhow::Result<Self> {
         let primary = Self::config_path();
         if primary.exists() {
@@ -148,5 +134,32 @@ impl Config {
         let toml_str = toml::to_string_pretty(self)?;
         std::fs::write(&path, toml_str)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capture_prompts_defaults_to_true() {
+        // When the key is absent from TOML, capture_prompts must default to true.
+        // This ensures existing users who haven't set the key see no behavior change.
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.capture_prompts, "capture_prompts must default to true");
+    }
+
+    #[test]
+    fn capture_prompts_can_be_disabled() {
+        let cfg: Config = toml::from_str("capture_prompts = false").unwrap();
+        assert!(!cfg.capture_prompts);
+    }
+
+    #[test]
+    fn capture_prompts_default_struct_matches_serde_default() {
+        // Default::default() and serde default must agree.
+        let from_default = Config::default();
+        let from_toml: Config = toml::from_str("").unwrap();
+        assert_eq!(from_default.capture_prompts, from_toml.capture_prompts);
     }
 }

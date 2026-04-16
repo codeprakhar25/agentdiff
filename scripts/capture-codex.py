@@ -52,7 +52,8 @@ def find_repo_root(cwd: str) -> str:
         return cwd
 
 
-def get_session_log(cwd: str) -> str:
+def get_session_log(cwd: str):
+    """Return session log path, or None if agentdiff init has not been run here."""
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -61,15 +62,11 @@ def get_session_log(cwd: str) -> str:
         return override
 
     repo_root = find_repo_root(cwd)
-    if os.path.exists(os.path.join(repo_root, ".git")):
-        base = os.path.join(repo_root, ".git", "agentdiff")
-        os.makedirs(base, exist_ok=True)
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if os.path.isdir(base):
         return os.path.join(base, "session.jsonl")
 
-    spill_root = os.environ.get("AGENTDIFF_SPILLOVER", os.path.expanduser("~/.agentdiff/spillover"))
-    os.makedirs(spill_root, exist_ok=True)
-    slug = cwd.replace("/", "-") or "unknown"
-    return os.path.join(spill_root, f"{slug}.jsonl")
+    return None
 
 
 def parse_diff_added_lines(diff_text: str) -> Dict[str, List[int]]:
@@ -156,11 +153,17 @@ def pre_task_state_path(repo_root: str) -> str:
 
 
 def save_pre_task_state(repo_root: str) -> None:
-    """Snapshot current dirty-file list so task_complete can isolate codex's changes."""
+    """Snapshot current dirty-file list so task_complete can isolate codex's changes.
+
+    Only runs if agentdiff init has been run (i.e. .git/agentdiff/ exists).
+    """
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if not os.path.isdir(base):
+        debug_log("pre-task snapshot skipped: agentdiff init not run in this repo")
+        return
     dirty = get_dirty_file_names(repo_root)
     state_path = pre_task_state_path(repo_root)
     try:
-        os.makedirs(os.path.dirname(state_path), exist_ok=True)
         with open(state_path, "w", encoding="utf-8") as f:
             json.dump({"files": sorted(dirty)}, f)
         debug_log(f"pre-task snapshot: {len(dirty)} dirty files → {state_path}")
@@ -550,8 +553,10 @@ def main() -> int:
         cwd, model, session_id, turn_id, prompt, event_name = extract_codex_context(events)
         debug_log(f"event_name={event_name!r} turn_id={turn_id!r} cwd_from_events={cwd!r}")
 
-        # task_started: snapshot dirty files so task_complete can isolate what codex changed.
-        task_started_events = {"task_started", "TaskStarted"}
+        # task_started / UserPromptSubmit: snapshot dirty files so task_complete can
+        # isolate what codex changed. UserPromptSubmit fires from hooks.json before
+        # the model processes each turn — same semantics as the older task_started event.
+        task_started_events = {"task_started", "TaskStarted", "UserPromptSubmit"}
         if event_name and event_name in task_started_events:
             debug_log(f"task_started: saving pre-task state")
             # Resolve repo root for snapshot (best-effort — use event cwd or process cwd).
@@ -629,6 +634,9 @@ def main() -> int:
 
         timestamp = datetime.now(timezone.utc).isoformat()
         session_log = get_session_log(chosen_cwd)
+        if session_log is None:
+            debug_log(f"skip: agentdiff init not run in {chosen_cwd!r}")
+            return 0
 
         with open(session_log, "a", encoding="utf-8") as f:
             for file_path, lines in changed.items():

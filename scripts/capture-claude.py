@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 AgentDiff capture script for Claude Code PostToolUse hook.
-Writes to <repo>/.git/agentdiff/session.jsonl when in a git repo.
-Falls back to ~/.agentdiff/spillover/*.jsonl when no repo is available.
+Writes to <repo>/.git/agentdiff/session.jsonl only when agentdiff init has been
+run in that repo (i.e. .git/agentdiff/ exists). Exits silently otherwise.
 """
 import os
 import sys
@@ -13,6 +13,24 @@ from datetime import datetime, timezone
 
 def debug_enabled() -> bool:
     return os.environ.get("AGENTDIFF_DEBUG", "").lower() in {"1", "true", "yes", "on"}
+
+
+def capture_prompts_enabled() -> bool:
+    """Read capture_prompts setting from ~/.agentdiff/config.toml. Defaults to True."""
+    config_path = os.path.expanduser("~/.agentdiff/config.toml")
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            content = f.read()
+        # Look for capture_prompts = false (simple line-level check, no full TOML parse needed)
+        for line in content.splitlines():
+            stripped = line.strip().replace(" ", "").lower()
+            if stripped.startswith("capture_prompts="):
+                # Strip inline TOML comments before comparing the value.
+                val = stripped.split("=", 1)[1].split("#")[0].strip()
+                return val not in ("false", "0", "no", "off")
+    except (OSError, IOError):
+        pass
+    return True
 
 
 def debug_log(message: str) -> None:
@@ -44,8 +62,13 @@ def find_repo_root(cwd: str) -> str:
         return cwd
 
 
-def get_session_log(cwd: str) -> str:
-    """Resolve repo-local session buffer, fallback spillover buffer."""
+def get_session_log(cwd: str):
+    """Return session log path, or None if agentdiff init has not been run here.
+
+    Capture is opt-in per-repo: agentdiff init creates .git/agentdiff/ which is
+    the signal that this repo should be tracked. Without that directory the hook
+    exits silently — no data is written anywhere.
+    """
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -54,15 +77,12 @@ def get_session_log(cwd: str) -> str:
         return override
 
     repo_root = find_repo_root(cwd)
-    if os.path.exists(os.path.join(repo_root, ".git")):
-        base = os.path.join(repo_root, ".git", "agentdiff")
-        os.makedirs(base, exist_ok=True)
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if os.path.isdir(base):
         return os.path.join(base, "session.jsonl")
 
-    spill_root = os.environ.get("AGENTDIFF_SPILLOVER", os.path.expanduser("~/.agentdiff/spillover"))
-    os.makedirs(spill_root, exist_ok=True)
-    slug = cwd.replace("/", "-") or "unknown"
-    return os.path.join(spill_root, f"{slug}.jsonl")
+    # agentdiff init not run in this repo — skip silently.
+    return None
 
 
 def get_model_and_prompt(cwd: str, session_id: str) -> tuple:
@@ -112,11 +132,11 @@ def get_model_and_prompt(cwd: str, session_id: str) -> tuple:
 
 
 def is_in_repo(abs_file: str, repo_root: str) -> bool:
-    """Check if file is in the repo (not .git or .agentblame)."""
+    """Check if file is in the repo """
     if not abs_file.startswith(repo_root):
         return False
     rel = abs_file[len(repo_root):]
-    if rel.startswith("/.git") or rel.startswith("/.agentblame"):
+    if rel.startswith("/.git"):
         return False
     return True
 
@@ -188,9 +208,10 @@ def main():
         "tool": tool,
         "file": abs_file[len(repo_root):].lstrip("/") if in_repo else abs_file,
         "abs_file": abs_file,
-        "prompt": prompt,
         "acceptance": "verbatim",
     }
+    if capture_prompts_enabled():
+        entry["prompt"] = prompt
 
     if tool == "Edit":
         entry["old"] = first(tool_input, "old_string", "oldString", default="")[:200]
@@ -210,6 +231,9 @@ def main():
         entry["lines"] = list(range(1, total_lines + 2))
 
     session_log = get_session_log(cwd)
+    if session_log is None:
+        debug_log("skip: agentdiff init not run in this repo")
+        sys.exit(0)
     with open(session_log, "a") as f:
         f.write(json.dumps(entry) + "\n")
     debug_log(f"wrote entry tool={tool} file={entry['file']} lines={entry.get('lines')}")

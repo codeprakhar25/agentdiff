@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/ usr/bin/env python3
 """
 Finalize pending ledger snapshot after commit.
 
@@ -20,6 +20,30 @@ import sys
 import tempfile
 import uuid as uuid_mod
 from typing import List, Optional
+
+def _capture_prompts_enabled() -> bool:
+    """Read capture_prompts setting from ~/.agentdiff/config.toml. Defaults to True.
+
+    Note: this gates what ends up in final trace entries (git refs, pushed to GitHub).
+    The ephemeral session.jsonl in .git/agentdiff/ may still contain prompts from
+    non-Claude agents even when capture_prompts=false, since individual capture scripts
+    each control their own session.jsonl writes. Only capture-claude.py currently
+    respects this setting at capture time. The critical protection is here: nothing
+    with capture_prompts=false reaches a git ref or remote.
+    """
+    config_path = os.path.expanduser("~/.agentdiff/config.toml")
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            content = f.read()
+        for line in content.splitlines():
+            stripped = line.strip().replace(" ", "").lower()
+            if stripped.startswith("capture_prompts="):
+                # Strip inline TOML comments before comparing the value.
+                val = stripped.split("=", 1)[1].split("#")[0].strip()
+                return val not in ("false", "0", "no", "off")
+    except (OSError, IOError):
+        pass
+    return True
 
 
 def run(cmd: List[str], cwd: str) -> subprocess.CompletedProcess:
@@ -204,11 +228,13 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> bool:
         return True  # Nothing to record, not an error.
 
     # Build metadata extension block.
+    prompts_on = _capture_prompts_enabled()
     metadata: dict = {}
-    if pending.get("prompt_excerpt"):
-        metadata["prompt_excerpt"] = str(pending["prompt_excerpt"])
-    if pending.get("prompt_hash"):
-        metadata["prompt_hash"] = str(pending["prompt_hash"])
+    if prompts_on:
+        if pending.get("prompt_excerpt"):
+            metadata["prompt_excerpt"] = str(pending["prompt_excerpt"])
+        if pending.get("prompt_hash"):
+            metadata["prompt_hash"] = str(pending["prompt_hash"])
     if isinstance(pending.get("trust"), int):
         metadata["trust"] = pending["trust"]
     if isinstance(pending.get("flags"), list) and pending["flags"]:
@@ -294,6 +320,7 @@ def main() -> int:
     author_res = run(["git", "show", "-s", "--format=%an", "HEAD"], cwd=repo_root)
     author = author_res.stdout.strip() if author_res.returncode == 0 else ""
 
+    prompts_on = _capture_prompts_enabled()
     entry: dict = {
         "sha": sha,
         "ts": ts,
@@ -303,8 +330,8 @@ def main() -> int:
         "author": author or None,
         "files_touched": pending.get("files_touched") if isinstance(pending.get("files_touched"), list) else [],
         "lines": pending.get("lines") if isinstance(pending.get("lines"), dict) else {},
-        "prompt_excerpt": str(pending.get("prompt_excerpt") or ""),
-        "prompt_hash": str(pending.get("prompt_hash") or ""),
+        "prompt_excerpt": str(pending.get("prompt_excerpt") or "") if prompts_on else "",
+        "prompt_hash": str(pending.get("prompt_hash") or "") if prompts_on else "",
         "files_read": pending.get("files_read") if isinstance(pending.get("files_read"), list) else [],
         "flags": pending.get("flags") if isinstance(pending.get("flags"), list) else [],
         "tool": str(pending.get("tool") or "commit"),

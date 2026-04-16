@@ -86,7 +86,8 @@ def is_within_repo(path: str, repo_root: str) -> bool:
         return False
 
 
-def get_session_log(cwd: str, repo_root_hint: str = "") -> str:
+def get_session_log(cwd: str, repo_root_hint: str = ""):
+    """Return session log path, or None if agentdiff init has not been run here."""
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -95,15 +96,11 @@ def get_session_log(cwd: str, repo_root_hint: str = "") -> str:
         return override
 
     repo_root = repo_root_hint or find_repo_root(cwd)
-    if is_git_repo(repo_root):
-        base = os.path.join(repo_root, ".git", "agentdiff")
-        os.makedirs(base, exist_ok=True)
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if os.path.isdir(base):
         return os.path.join(base, "session.jsonl")
 
-    spill_root = os.environ.get("AGENTDIFF_SPILLOVER", os.path.expanduser("~/.agentdiff/spillover"))
-    os.makedirs(spill_root, exist_ok=True)
-    slug = cwd.replace("/", "-") or "unknown"
-    return os.path.join(spill_root, f"{slug}.jsonl")
+    return None
 
 
 def get_cached_prompt(conversation_id: str) -> str:
@@ -216,6 +213,9 @@ def main():
         entry["lines"] = [line_num if isinstance(line_num, int) else 1]
 
     session_log = get_session_log(cwd, repo_root if in_repo else "")
+    if session_log is None:
+        debug_log(f"skip: agentdiff init not run in {repo_root!r}")
+        sys.exit(0)
     with open(session_log, "a") as f:
         f.write(json.dumps(entry) + "\n")
     debug_log(

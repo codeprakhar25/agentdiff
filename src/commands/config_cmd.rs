@@ -15,10 +15,6 @@ pub fn run(config: &Config, args: &ConfigArgs) -> Result<()> {
 fn cmd_show(config: &Config) -> Result<()> {
     println!("{}", "agentdiff config".cyan().bold());
     println!();
-    println!(
-        "  Spillover directory: {}",
-        config.spillover_root().display()
-    );
     println!("  Scripts directory: {}", config.scripts_root().display());
     println!(
         "  Auto-amend ledger: {}",
@@ -27,6 +23,10 @@ fn cmd_show(config: &Config) -> Result<()> {
         } else {
             "disabled"
         }
+    );
+    println!(
+        "  Capture prompts:   {} (disable with: agentdiff config set capture_prompts false)",
+        if config.capture_prompts { "enabled" } else { "disabled" }
     );
     println!("  Config file: {}", Config::config_path().display());
     println!();
@@ -54,18 +54,18 @@ fn cmd_show(config: &Config) -> Result<()> {
 fn cmd_set(config: &Config, key: &str, value: &str) -> Result<()> {
     let mut cfg = config.clone();
     match key {
-        "spillover_dir" | "data_dir" => {
-            cfg.data_dir = Some(std::path::PathBuf::from(value));
-        }
         "scripts_dir" => {
             cfg.scripts_dir = Some(std::path::PathBuf::from(value));
         }
         "auto_amend_ledger" => {
             cfg.auto_amend_ledger = parse_bool(value)?;
         }
+        "capture_prompts" => {
+            cfg.capture_prompts = parse_bool(value)?;
+        }
         _ => {
             anyhow::bail!(
-                "Unknown config key: {}. Valid keys: spillover_dir (alias: data_dir), scripts_dir, auto_amend_ledger",
+                "Unknown config key: {}. Valid keys: scripts_dir, auto_amend_ledger, capture_prompts",
                 key
             );
         }
@@ -77,14 +77,14 @@ fn cmd_set(config: &Config, key: &str, value: &str) -> Result<()> {
 
 fn cmd_get(config: &Config, key: &str) -> Result<()> {
     match key {
-        "spillover_dir" | "data_dir" => {
-            println!("{}", config.spillover_root().display());
-        }
         "scripts_dir" => {
             println!("{}", config.scripts_root().display());
         }
         "auto_amend_ledger" => {
             println!("{}", config.auto_amend_ledger_enabled());
+        }
+        "capture_prompts" => {
+            println!("{}", config.capture_prompts);
         }
         _ => {
             anyhow::bail!("Unknown config key: {}", key);

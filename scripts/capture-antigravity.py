@@ -2,12 +2,11 @@
 """
 AgentDiff capture script for Antigravity / Gemini hooks and batch agents.
 """
-import argparse
 from datetime import datetime, timezone
 from typing import Dict, List
 
 import os
-import re
+import select
 import sys
 import json
 import subprocess
@@ -24,7 +23,8 @@ def find_repo_root(cwd: str) -> str:
         return cwd
 
 
-def get_session_log(cwd: str) -> str:
+def get_session_log(cwd: str):
+    """Return session log path, or None if agentdiff init has not been run here."""
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -33,15 +33,11 @@ def get_session_log(cwd: str) -> str:
         return override
 
     repo_root = find_repo_root(cwd)
-    if os.path.exists(os.path.join(repo_root, ".git")):
-        base = os.path.join(repo_root, ".git", "agentdiff")
-        os.makedirs(base, exist_ok=True)
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if os.path.isdir(base):
         return os.path.join(base, "session.jsonl")
 
-    spill_root = os.environ.get("AGENTDIFF_SPILLOVER", os.path.expanduser("~/.agentdiff/spillover"))
-    os.makedirs(spill_root, exist_ok=True)
-    slug = cwd.replace("/", "-") or "unknown"
-    return os.path.join(spill_root, f"{slug}.jsonl")
+    return None
 
 
 def first(payload: dict, *keys, default=None):
@@ -84,68 +80,6 @@ def parse_json_or_jsonl(text: str):
 def is_git_repo(path: str) -> bool:
     return bool(path) and os.path.exists(os.path.join(path, ".git"))
 
-
-def parse_diff_added_lines(diff_text: str) -> Dict[str, List[int]]:
-    changed: Dict[str, List[int]] = {}
-    current_file = ""
-    current_line = 0
-    in_hunk = False
-
-    for raw in diff_text.splitlines():
-        if raw.startswith("diff --git "):
-            parts = raw.split()
-            if len(parts) >= 4:
-                path = parts[3]
-                if path.startswith("b/"):
-                    path = path[2:]
-                current_file = path
-                changed.setdefault(current_file, [])
-                in_hunk = False
-            continue
-
-        if raw.startswith("@@"):
-            m = re.search(r"\+(\d+)(?:,\d+)?", raw)
-            if m:
-                current_line = int(m.group(1))
-                in_hunk = True
-            continue
-
-        if not in_hunk or not current_file:
-            continue
-
-        if raw.startswith("+") and not raw.startswith("+++"):
-            changed[current_file].append(current_line)
-            current_line += 1
-            continue
-
-        if raw.startswith("-") and not raw.startswith("---"):
-            continue
-
-        current_line += 1
-
-    return {k: sorted(set(v)) for k, v in changed.items() if v}
-
-
-def collect_changed_lines(repo_root: str) -> Dict[str, List[int]]:
-    result: Dict[str, List[int]] = {}
-    commands = [
-        ["git", "diff", "--no-color", "--unified=0"],
-        ["git", "diff", "--cached", "--no-color", "--unified=0"],
-        ["git", "diff", "HEAD", "--no-color", "--unified=0"],
-    ]
-    for cmd in commands:
-        try:
-            out = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
-        except Exception:
-            continue
-        if out.returncode != 0 or not out.stdout.strip():
-            continue
-        parsed = parse_diff_added_lines(out.stdout)
-        for path, lines in parsed.items():
-            result.setdefault(path, [])
-            result[path].extend(lines)
-
-    return {k: sorted(set(v)) for k, v in result.items() if v}
 
 
 def cache_root() -> str:
@@ -267,12 +201,15 @@ def resolve_payload_context(payload: dict) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--prompt", default="")
-    parser.add_argument("--model", default="")
-    args = parser.parse_args()
-
-    raw_stdin = sys.stdin.read()
+    # Non-blocking stdin read: if no data is ready within 0ms, skip.
+    # Prevents hanging when invoked as a shell command without piped input
+    # (e.g. from a GEMINI.md rule or manual call). Gemini CLI hooks always
+    # pipe JSON before the process starts, so select() returns immediately.
+    try:
+        ready = select.select([sys.stdin], [], [], 0.0)[0]
+        raw_stdin = sys.stdin.read() if ready else ""
+    except Exception:
+        raw_stdin = ""
 
     # Always write a fire-marker (helps diagnose silent failures).
     try:
@@ -327,18 +264,18 @@ def main():
                 )
 
         if not changed:
-            changed = collect_changed_lines(repo_root)
-        if not changed:
             return 0
 
         if not session_id:
             session_id = f"antigravity-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-        model = (ctx.get("model") or "").strip() or args.model or "gemini"
-        prompt = prompt or get_cached_prompt(session_id) or args.prompt or "unknown"
+        model = (ctx.get("model") or "").strip() or "gemini"
+        prompt = prompt or get_cached_prompt(session_id) or "unknown"
         tool = tool_name or event_name or "batch-edit"
         timestamp = datetime.now(timezone.utc).isoformat()
 
         session_log = get_session_log(cwd)
+        if session_log is None:
+            return 0
         with open(session_log, "a", encoding="utf-8") as f:
             for file_path, lines in changed.items():
                 entry = {
@@ -357,39 +294,8 @@ def main():
                 f.write(json.dumps(entry) + "\n")
         return 0
 
-    # Manual fallback mode: allow direct CLI use in any git repo.
-    cwd = os.getcwd()
-    repo_root = find_repo_root(cwd)
-    if not is_git_repo(repo_root):
-        print("Not in a git repository", file=sys.stderr)
-        return 1
-
-    changed = collect_changed_lines(repo_root)
-    if not changed:
-        return 0
-
-    timestamp = datetime.now(timezone.utc).isoformat()
-    session_id = f"antigravity-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-    model = args.model or "antigravity"
-    prompt = args.prompt or "unknown"
-    session_log = get_session_log(cwd)
-
-    with open(session_log, "a", encoding="utf-8") as f:
-        for file_path, lines in changed.items():
-            entry = {
-                "timestamp": timestamp,
-                "agent": "antigravity",
-                "mode": "agent",
-                "model": model,
-                "session_id": session_id,
-                "tool": "batch-edit",
-                "file": file_path,
-                "abs_file": os.path.join(repo_root, file_path),
-                "prompt": prompt,
-                "acceptance": "verbatim",
-                "lines": sorted(set(lines)),
-            }
-            f.write(json.dumps(entry) + "\n")
+    # No stdin JSON — script was run outside a Gemini CLI hook context.
+    # The GEMINI.md rule writes entries directly; this script is only for the hook path.
     return 0
 
 

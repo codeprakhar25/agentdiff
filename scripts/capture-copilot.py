@@ -41,7 +41,8 @@ def is_git_repo(path: str) -> bool:
     return bool(path) and os.path.exists(os.path.join(path, ".git"))
 
 
-def get_session_log(cwd: str) -> str:
+def get_session_log(cwd: str):
+    """Return session log path, or None if agentdiff init has not been run here."""
     override = os.environ.get("AGENTDIFF_SESSION_LOG")
     if override:
         parent = os.path.dirname(override)
@@ -50,17 +51,11 @@ def get_session_log(cwd: str) -> str:
         return override
 
     repo_root = find_repo_root(cwd)
-    if is_git_repo(repo_root):
-        base = os.path.join(repo_root, ".git", "agentdiff")
-        os.makedirs(base, exist_ok=True)
+    base = os.path.join(repo_root, ".git", "agentdiff")
+    if os.path.isdir(base):
         return os.path.join(base, "session.jsonl")
 
-    spill_root = os.environ.get(
-        "AGENTDIFF_SPILLOVER", os.path.expanduser("~/.agentdiff/spillover")
-    )
-    os.makedirs(spill_root, exist_ok=True)
-    slug = cwd.replace("/", "-").replace("\\", "-") or "unknown"
-    return os.path.join(spill_root, f"{slug}.jsonl")
+    return None
 
 
 def main():
@@ -119,6 +114,9 @@ def main():
     }
 
     session_log = get_session_log(cwd)
+    if session_log is None:
+        debug_log(f"skip: agentdiff init not run in {repo_root!r}")
+        return
     with open(session_log, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     debug_log(

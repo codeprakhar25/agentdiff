@@ -6,13 +6,30 @@ use anyhow::Result;
 use colored::Colorize;
 
 pub fn run(store: &Store, args: &ListArgs) -> Result<()> {
+    if !store.is_initialized() {
+        println!(
+            "\n  {} agentdiff init not run in this repo — no captures recorded.",
+            "!".yellow()
+        );
+        println!(
+            "  Run {} to start tracking AI contributions.\n",
+            "agentdiff init".cyan()
+        );
+        return Ok(());
+    }
+
     if args.uncommitted {
         return run_uncommitted(store, args);
     }
 
     let mut traces = store.load_all_traces()?;
     if traces.is_empty() {
-        println!("\n  {} — no traces found\n", "agentdiff list".cyan().bold());
+        println!("\n  {} — no traces found", "agentdiff list".cyan().bold());
+        println!("  Use an AI agent to edit files, then commit.");
+        println!(
+            "  Run {} to verify hooks and agent capture are active.\n",
+            "agentdiff status".cyan()
+        );
         return Ok(());
     }
 

@@ -13,6 +13,12 @@ impl Store {
         Self { repo_root }
     }
 
+    /// Returns true if `agentdiff init` has been run in this repo.
+    /// The presence of .git/agentdiff/ is the canonical signal.
+    pub fn is_initialized(&self) -> bool {
+        self.repo_root.join(".git").join("agentdiff").is_dir()
+    }
+
     // ── Trace loading (new Agent Trace storage) ─────────────────────────
 
     /// Load traces from refs/agentdiff/meta:traces.jsonl (permanent store).

@@ -4,6 +4,18 @@ use anyhow::Result;
 use colored::Colorize;
 
 pub fn run(store: &Store, args: &ShowArgs) -> Result<()> {
+    if !store.is_initialized() {
+        println!(
+            "\n  {} agentdiff init not run in this repo — no captures recorded.",
+            "!".yellow()
+        );
+        println!(
+            "  Run {} to start tracking AI contributions.\n",
+            "agentdiff init".cyan()
+        );
+        return Ok(());
+    }
+
     // Try UUID prefix first, then SHA prefix
     let trace = store.find_trace(&args.sha)?;
     let trace = match trace {

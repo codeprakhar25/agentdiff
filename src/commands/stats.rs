@@ -6,6 +6,18 @@ use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 
 pub fn run(store: &Store, args: &StatsArgs) -> Result<()> {
+    if !store.is_initialized() {
+        println!(
+            "\n  {} agentdiff init not run in this repo — no captures recorded.",
+            "!".yellow()
+        );
+        println!(
+            "  Run {} to start tracking AI contributions.\n",
+            "agentdiff init".cyan()
+        );
+        return Ok(());
+    }
+
     let entries = store.load_entries()?;
 
     let mut agent_lines: HashMap<String, u32> = HashMap::new();

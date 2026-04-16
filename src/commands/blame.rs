@@ -6,6 +6,18 @@ use colored::Colorize;
 use std::collections::HashMap;
 
 pub fn run(store: &Store, args: &BlameArgs) -> Result<()> {
+    if !store.is_initialized() {
+        println!(
+            "\n  {} agentdiff init not run in this repo — no captures recorded.",
+            "!".yellow()
+        );
+        println!(
+            "  Run {} to start tracking AI contributions.\n",
+            "agentdiff init".cyan()
+        );
+        return Ok(());
+    }
+
     let entries = store.load_entries()?;
     let rel_path = args.file.clone();
     let abs_path = store.repo_root.join(&rel_path);

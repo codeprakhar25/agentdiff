@@ -5,6 +5,18 @@ use anyhow::Result;
 use colored::Colorize;
 
 pub fn run(store: &Store, args: &DiffArgs) -> Result<()> {
+    if !store.is_initialized() {
+        println!(
+            "\n  {} agentdiff init not run in this repo — no captures recorded.",
+            "!".yellow()
+        );
+        println!(
+            "  Run {} to start tracking AI contributions.\n",
+            "agentdiff init".cyan()
+        );
+        return Ok(());
+    }
+
     let commit = args.commit.as_deref().unwrap_or("HEAD");
     let entries = store.load_entries()?;
 

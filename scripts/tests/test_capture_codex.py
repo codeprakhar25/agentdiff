@@ -38,6 +38,10 @@ class CaptureCodexTests(unittest.TestCase):
             file_a = commit_file(repo_a, "src/a.txt", "one\n")
             file_b = commit_file(repo_b, "src/b.txt", "alpha\n")
 
+            # Simulate agentdiff init in both repos.
+            (repo_a / ".git" / "agentdiff").mkdir(parents=True, exist_ok=True)
+            (repo_b / ".git" / "agentdiff").mkdir(parents=True, exist_ok=True)
+
             # Create pending changes in both repos.
             file_a.write_text("one\ntwo\n", encoding="utf-8")
             file_b.write_text("alpha\nbeta\n", encoding="utf-8")

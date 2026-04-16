@@ -43,18 +43,12 @@ function findRepoRoot(filePath) {
     });
 }
 
-function getCopilotModel() {
-    // Copilot doesn't publicly expose the active model name.
-    // Try to read it from known config keys; fall back to a sensible default.
+async function getCopilotModel() {
     try {
-        const cfg = vscode.workspace.getConfiguration('github.copilot');
-        const advanced = cfg.get('advanced');
-        if (advanced && typeof advanced === 'object' && advanced['engine']) {
-            return String(advanced['engine']);
+        const models = await vscode.lm.selectChatModels({ vendor: 'copilot' });
+        if (models && models.length > 0) {
+            return models[0].id;
         }
-        // Copilot Chat >= 1.0 uses GPT-4o by default
-        const chatExt = vscode.extensions.getExtension('GitHub.copilot-chat');
-        if (chatExt) return 'gpt-4o';
     } catch (_) {}
     return 'copilot';
 }
@@ -79,7 +73,7 @@ async function captureFile(filePath, pending) {
         event: pending.tool,
         cwd,
         file_path: filePath,
-        model: getCopilotModel(),
+        model: await getCopilotModel(),
         session_id: `vscode-${Date.now()}`,
         prompt: null,
         lines: Array.from(pending.lines).sort((a, b) => a - b),

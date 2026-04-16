@@ -25,6 +25,9 @@ class CaptureAntigravityTests(unittest.TestCase):
             home.mkdir(parents=True, exist_ok=True)
             init_repo(repo)
 
+            # Simulate agentdiff init: create .git/agentdiff/ so capture fires.
+            (repo / ".git" / "agentdiff").mkdir(parents=True, exist_ok=True)
+
             file_path = repo / "src" / "main.ts"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text("const greeting = 'hello';\n", encoding="utf-8")
@@ -50,10 +53,11 @@ class CaptureAntigravityTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
             )
+            print("Before payload:", before_proc)
             self.assertEqual(before_proc.returncode, 0, msg=before_proc.stderr)
 
-            file_path.write_text("const greeting = 'hello world';\n", encoding="utf-8")
-
+            res = file_path.write_text("const greeting = 'hello world';\n", encoding="utf-8")
+            print("File write result:", res)
             after_payload = {
                 "hook_event_name": "AfterTool",
                 "tool_name": "replace",
@@ -66,7 +70,7 @@ class CaptureAntigravityTests(unittest.TestCase):
                     "new_string": "hello world",
                 },
             }
-
+            print("After payload:", after_payload)
             after_proc = subprocess.run(
                 ["python3", str(SCRIPT_PATH)],
                 input=json.dumps(after_payload),
@@ -75,6 +79,8 @@ class CaptureAntigravityTests(unittest.TestCase):
                 env=env,
                 capture_output=True,
             )
+            print("After stdout:", after_proc.stdout)
+            print("After stderr:", after_proc.stderr)
             self.assertEqual(after_proc.returncode, 0, msg=after_proc.stderr)
 
             session_log = repo / ".git" / "agentdiff" / "session.jsonl"

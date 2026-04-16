@@ -34,12 +34,30 @@ class CaptureCursorTests(unittest.TestCase):
             repo.mkdir()
             subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
 
+            # Simulate agentdiff init — capture only fires when .git/agentdiff/ exists.
+            agentdiff_dir = repo / ".git" / "agentdiff"
+            agentdiff_dir.mkdir(parents=True, exist_ok=True)
+
             session_log = self.mod.get_session_log(str(repo), str(repo))
-            expected = repo / ".git" / "agentdiff" / "session.jsonl"
+            expected = agentdiff_dir / "session.jsonl"
             self.assertEqual(Path(session_log), expected)
-            self.assertTrue(expected.parent.exists())
+
+    def test_returns_none_when_agentdiff_init_not_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            # No .git/agentdiff/ — agentdiff init not run.
+            result = self.mod.get_session_log(str(repo), str(repo))
+            self.assertIsNone(result, "get_session_log must return None when init not run")
 
     def test_hook_event_writes_repo_session_when_cwd_not_repo(self):
+        """Capture writes to repo-local session.jsonl when cwd is not the repo.
+
+        Cursor often runs hooks with cwd=~/.cursor rather than the repo root.
+        The capture script resolves the repo from the edited file's path.
+        Capture only fires when agentdiff init has been run (.git/agentdiff/ exists).
+        """
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             repo.mkdir()
@@ -48,6 +66,10 @@ class CaptureCursorTests(unittest.TestCase):
             src.mkdir()
             edited = src / "main.rs"
             edited.write_text("fn main() {}\n", encoding="utf-8")
+
+            # Simulate agentdiff init: create .git/agentdiff/ so capture fires.
+            agentdiff_dir = repo / ".git" / "agentdiff"
+            agentdiff_dir.mkdir(parents=True, exist_ok=True)
 
             payload = {
                 "hook_event_name": "afterTabFileEdit",
@@ -58,20 +80,16 @@ class CaptureCursorTests(unittest.TestCase):
                 "conversationId": "conv-test-1",
             }
 
-            spillover_root = Path(tmp) / "spillover"
-            env = os.environ.copy()
-            env["AGENTDIFF_SPILLOVER"] = str(spillover_root)
-
             proc = subprocess.run(
                 ["python3", str(SCRIPT_PATH)],
                 input=json.dumps(payload),
                 text=True,
                 capture_output=True,
-                env=env,
+                env=os.environ.copy(),
             )
             self.assertEqual(proc.returncode, 0, msg=proc.stderr)
 
-            session_log = repo / ".git" / "agentdiff" / "session.jsonl"
+            session_log = agentdiff_dir / "session.jsonl"
             self.assertTrue(session_log.exists(), "repo-local session log should exist")
 
             lines = [ln for ln in session_log.read_text(encoding="utf-8").splitlines() if ln.strip()]
@@ -80,8 +98,40 @@ class CaptureCursorTests(unittest.TestCase):
             self.assertEqual(entry.get("agent"), "cursor")
             self.assertEqual(entry.get("file"), "src/main.rs")
 
-            spill_files = list(spillover_root.glob("*.jsonl"))
-            self.assertEqual(spill_files, [], "event should not fall back to spillover for repo file edits")
+    def test_no_capture_when_agentdiff_init_not_run(self):
+        """Capture must be silent when .git/agentdiff/ does not exist."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            edited = repo / "main.rs"
+            edited.write_text("fn main() {}\n", encoding="utf-8")
+
+            # Do NOT create .git/agentdiff/ — agentdiff init not run.
+
+            payload = {
+                "hook_event_name": "afterTabFileEdit",
+                "cwd": str(repo),
+                "file_path": str(edited),
+                "lineNumber": 1,
+                "model": "cursor-test-model",
+                "conversationId": "conv-test-2",
+            }
+
+            proc = subprocess.run(
+                ["python3", str(SCRIPT_PATH)],
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                env=os.environ.copy(),
+            )
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+
+            session_log = repo / ".git" / "agentdiff" / "session.jsonl"
+            self.assertFalse(
+                session_log.exists(),
+                "session.jsonl must not be created when agentdiff init has not been run",
+            )
 
 
 if __name__ == "__main__":

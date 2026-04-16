@@ -48,9 +48,6 @@ pub enum Command {
     /// Ledger maintenance commands
     Ledger(LedgerArgs),
 
-    /// Fetch refs/notes/agentdiff from origin
-    SyncNotes,
-
     /// Manage global and repo-level configuration
     Config(ConfigArgs),
 
@@ -74,9 +71,6 @@ pub enum Command {
 
     /// Consolidate per-branch ref traces into agentdiff-meta (used by CI)
     Consolidate(ConsolidateArgs),
-
-    /// Legacy: import ledger.jsonl into agentdiff-meta
-    Migrate,
 
     /// Show remote agentdiff ref state (refs/agentdiff/* on origin)
     RemoteStatus(RemoteStatusArgs),

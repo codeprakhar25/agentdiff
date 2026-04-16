@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod config;
+mod configure;
 mod data;
 mod init;
 mod keys;
@@ -51,7 +52,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Configure(args) => {
             let mut cfg = config;
-            init::run_configure(
+            configure::run_configure(
                 &mut cfg,
                 args.no_claude,
                 args.no_cursor,
@@ -75,7 +76,6 @@ fn main() -> anyhow::Result<()> {
         Command::Log(args) => commands::log::run(&store, &args),
         Command::Show(args) => commands::show::run(&store, &args),
         Command::Ledger(args) => commands::ledger::run(&store, &args),
-        Command::SyncNotes => commands::sync_notes::run(&store),
         Command::Config(args) => commands::config_cmd::run(&config, &args),
         Command::Keys(args) => match args.action {
             cli::KeysAction::Init => commands::keys::run_init(),
@@ -88,7 +88,6 @@ fn main() -> anyhow::Result<()> {
         Command::Status => commands::status::run(&store),
         Command::Push(args) => commands::push::run(&store, &args),
         Command::Consolidate(args) => commands::consolidate::run(&store, &args),
-        Command::Migrate => commands::migrate::run(&store),
         Command::RemoteStatus(args) => commands::remote_status::run(&store, &args),
         Command::SignEntry => commands::sign_entry::run(&store),
     }

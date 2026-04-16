@@ -38,6 +38,8 @@ agentdiff list
 curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
 ```
 
+**Requirements:** Python 3.7+ on PATH, Git 2.20+
+
 <details>
 <summary>Other install methods</summary>
 
@@ -48,8 +50,6 @@ curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/inst
 # From source (requires Rust 1.85+)
 cargo install --git https://github.com/codeprakhar25/agentdiff agentdiff
 ```
-
-**Requirements:** Python 3.7+ on PATH, Git 2.20+
 
 </details>
 
@@ -65,16 +65,21 @@ agentdiff configure
 cd ~/your-project
 agentdiff init
 
-# 3. Work normally — make AI-assisted edits, then commit
+# 3. Verify hooks are active
+agentdiff status
+
+# 4. Work normally — make AI-assisted edits, then commit
 git add . && git commit -m "feat: add feature"
 
-# 4. Inspect attribution
+# 5. Inspect attribution
 agentdiff list
 agentdiff blame src/main.rs
 agentdiff stats
 ```
 
 That's it. From here every commit is attributed to whichever agent (or human) wrote it.
+
+> **Note:** `agentdiff configure` installs capture hooks globally — all repos you work on with AI agents will be tracked. To track only specific repos, you can skip the global configure and run `agentdiff init` per-repo only (you will need to configure hooks manually).
 
 ---
 
@@ -518,6 +523,33 @@ agentdiff config set auto_amend_ledger false
 # View current config
 agentdiff config show
 ```
+
+---
+
+## Data & Privacy
+
+**What agentdiff captures:**
+
+Each AI-assisted edit generates a trace entry containing:
+- Agent name and model (e.g., `claude-code`, `claude-sonnet-4-6`)
+- A short prompt excerpt (the first ~100 characters of your request to the AI)
+- File paths and line ranges affected
+- Timestamp and session ID
+
+**Where it's stored:**
+
+- **Locally:** `.git/agentdiff/session.jsonl` (not committed, stays in your `.git/` directory)
+- **On GitHub:** `refs/agentdiff/traces/{branch}` — pushed by `agentdiff push` or the pre-push hook
+
+**Prompt content visibility:** Once pushed, prompt excerpts are accessible to anyone with read access to the repository. If your prompts contain sensitive business context, IP, or credentials, disable prompt capture:
+
+```bash
+agentdiff config set capture_prompts false
+```
+
+When `capture_prompts = false`, the `prompt` field is omitted from all trace entries.
+
+**No external telemetry.** agentdiff does not send data to any server outside your own GitHub repository.
 
 ---
 

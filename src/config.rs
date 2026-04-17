@@ -19,10 +19,6 @@ pub struct Config {
     #[serde(default)]
     pub agent_aliases: std::collections::HashMap<String, String>,
 
-    /// Include .agentdiff/ledger.jsonl in the same commit via post-commit amend.
-    #[serde(default = "default_auto_amend_ledger")]
-    pub auto_amend_ledger: bool,
-
     /// When false, prompt excerpts are omitted from trace entries.
     /// Set to false in environments with sensitive prompt content.
     #[serde(default = "default_capture_prompts")]
@@ -39,10 +35,6 @@ fn default_schema() -> String {
     "1.0".to_string()
 }
 
-fn default_auto_amend_ledger() -> bool {
-    false
-}
-
 fn default_capture_prompts() -> bool {
     true
 }
@@ -54,7 +46,6 @@ impl Default for Config {
             scripts_dir: None,
             repos: Vec::new(),
             agent_aliases: std::collections::HashMap::new(),
-            auto_amend_ledger: false,
             capture_prompts: true,
         }
     }
@@ -69,21 +60,10 @@ impl Config {
             .join("config.toml")
     }
 
-    /// Legacy config path from earlier versions.
-    pub fn legacy_config_path() -> PathBuf {
-        dirs::home_dir()
-            .expect("home dir must exist")
-            .join("config.toml")
-    }
-
     pub fn scripts_root(&self) -> PathBuf {
         self.scripts_dir
             .clone()
             .unwrap_or_else(|| dirs::home_dir().unwrap().join(".agentdiff").join("scripts"))
-    }
-
-    pub fn auto_amend_ledger_enabled(&self) -> bool {
-        self.auto_amend_ledger
     }
 
     /// Derive slug from repo root path
@@ -113,14 +93,9 @@ impl Config {
     }
 
     pub fn load() -> anyhow::Result<Self> {
-        let primary = Self::config_path();
-        if primary.exists() {
-            let raw = std::fs::read_to_string(&primary)?;
-            return Ok(toml::from_str(&raw)?);
-        }
-        let legacy = Self::legacy_config_path();
-        if legacy.exists() {
-            let raw = std::fs::read_to_string(&legacy)?;
+        let path = Self::config_path();
+        if path.exists() {
+            let raw = std::fs::read_to_string(&path)?;
             return Ok(toml::from_str(&raw)?);
         }
         Ok(Config::default())

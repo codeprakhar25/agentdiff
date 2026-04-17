@@ -22,28 +22,11 @@ impl Store {
     // ── Trace loading (new Agent Trace storage) ─────────────────────────
 
     /// Load traces from refs/agentdiff/meta:traces.jsonl (permanent store).
-    /// Falls back to legacy refs/heads/agentdiff-meta with a migration prompt.
     pub fn load_meta_traces(&self) -> Result<Vec<AgentTrace>> {
-        // New namespace first.
-        if let Some(raw) = read_ref_file(&self.repo_root, "refs/agentdiff/meta", "traces.jsonl")? {
-            return parse_traces_jsonl(&raw);
+        match read_ref_file(&self.repo_root, "refs/agentdiff/meta", "traces.jsonl")? {
+            Some(raw) => parse_traces_jsonl(&raw),
+            None => Ok(Vec::new()),
         }
-        // Legacy fallback: refs/heads/agentdiff-meta (traces.jsonl format).
-        if let Some(raw) = read_ref_file(&self.repo_root, "agentdiff-meta", "traces.jsonl")? {
-            eprintln!(
-                "agentdiff: warn — found legacy agentdiff-meta branch. \
-                 Run 'agentdiff consolidate --push' to migrate to the new ref namespace."
-            );
-            return parse_traces_jsonl(&raw);
-        }
-        // Oldest legacy: agentdiff-meta:ledger.jsonl (pre-AgentTrace format).
-        if read_ref_file(&self.repo_root, "agentdiff-meta", "ledger.jsonl")?.is_some() {
-            eprintln!(
-                "agentdiff: warn — found legacy ledger.jsonl on agentdiff-meta. \
-                 Run 'agentdiff migrate' to import into the current trace format."
-            );
-        }
-        Ok(Vec::new())
     }
 
     /// Load traces from refs/agentdiff/traces/{branch} (per-branch ref).
@@ -84,10 +67,8 @@ impl Store {
     pub fn load_all_traces_raw(&self) -> Result<Vec<serde_json::Value>> {
         let mut values = Vec::new();
 
-        // Meta ref (new namespace, fall back to legacy branch name).
-        let meta_raw = read_ref_file(&self.repo_root, "refs/agentdiff/meta", "traces.jsonl")?
-            .or(read_ref_file(&self.repo_root, "agentdiff-meta", "traces.jsonl")?);
-        if let Some(raw) = meta_raw {
+        // Meta ref
+        if let Some(raw) = read_ref_file(&self.repo_root, "refs/agentdiff/meta", "traces.jsonl")? {
             parse_raw_jsonl(&raw, &mut values);
         }
 
@@ -159,12 +140,6 @@ impl Store {
         });
 
         Ok(entries)
-    }
-
-    /// Get only uncommitted entries
-    pub fn load_uncommitted(&self) -> Result<Vec<Entry>> {
-        let all = self.load_entries()?;
-        Ok(all.into_iter().filter(|e| !e.committed).collect())
     }
 
     /// Find a trace by UUID prefix.
@@ -260,7 +235,6 @@ fn read_ref_blob(repo_root: &Path, ref_name: &str) -> Result<Option<String>> {
 }
 
 /// Write content as a file on a git ref using plumbing only.
-/// Works for both agentdiff-meta branch and per-branch refs.
 pub fn write_to_ref(
     repo_root: &Path,
     ref_name: &str,
@@ -661,20 +635,6 @@ pub fn fetch_ref_content_via_api(
         .decode(encoded.as_bytes())
         .context("base64 decode blob")?;
     Ok(Some(String::from_utf8_lossy(&decoded).to_string()))
-}
-
-/// Push a standard branch ref (refs/heads/*) to origin via git push.
-/// Use push_content_to_ref for custom ref namespaces like refs/agentdiff/*.
-pub fn push_ref(repo_root: &Path, ref_name: &str) -> Result<()> {
-    let status = std::process::Command::new("git")
-        .args(["push", "origin", ref_name])
-        .current_dir(repo_root)
-        .status()
-        .context("git push")?;
-    if !status.success() {
-        anyhow::bail!("failed to push {ref_name} to origin");
-    }
-    Ok(())
 }
 
 /// Delete a remote ref via the GitHub REST API.

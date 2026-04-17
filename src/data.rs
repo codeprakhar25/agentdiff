@@ -182,8 +182,6 @@ pub struct Entry {
     pub committed: bool,
     #[serde(skip)]
     pub commit_hash: String,
-    #[serde(skip)]
-    pub batch_author: String,
 }
 
 fn default_acceptance() -> String {
@@ -225,10 +223,6 @@ impl AgentTrace {
             .and_then(|m| m.session_id.clone())
             .unwrap_or_default();
         let prompt = ad_meta.as_ref().and_then(|m| m.prompt_excerpt.clone());
-        let author = ad_meta
-            .as_ref()
-            .and_then(|m| m.author.clone())
-            .unwrap_or_default();
         let capture_tool = ad_meta
             .as_ref()
             .and_then(|m| m.capture_tool.clone())
@@ -277,7 +271,6 @@ impl AgentTrace {
                     edits: None,
                     committed: true,
                     commit_hash: commit_hash.clone(),
-                    batch_author: author.clone(),
                 });
             }
         }
@@ -310,7 +303,8 @@ impl AgentTrace {
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 /// Expand inclusive [start, end] ranges into individual line numbers.
-pub fn expand_ranges(ranges: &[(u32, u32)]) -> Vec<u32> {
+#[cfg(test)]
+fn expand_ranges(ranges: &[(u32, u32)]) -> Vec<u32> {
     let mut out = Vec::new();
     for &(start, end) in ranges {
         if start == 0 || end == 0 {

@@ -9,6 +9,7 @@
 ///    global rules file instructs the agent to run the capture script after each
 ///    file edit. This is best-effort (LLM-followed) rather than guaranteed.
 use crate::config::Config;
+use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
@@ -23,7 +24,7 @@ pub fn step_configure_antigravity(config: &Config) -> Result<()> {
     if !gemini_dir.exists() && !settings_path.exists() {
         println!(
             "{} ~/.gemini not found — skipping Gemini/Antigravity setup",
-            "!".yellow()
+            warn()
         );
         return Ok(());
     }
@@ -160,11 +161,11 @@ fn step_configure_gemini_hooks(
         fs::write(settings_path, serde_json::to_string_pretty(&cfg)?)?;
         println!(
             "{} Gemini CLI hooks configured in {}",
-            "ok".green(),
+            ok(),
             settings_path.display()
         );
     } else {
-        println!("{} Gemini CLI hooks already present", "--".dimmed());
+        println!("{} Gemini CLI hooks already present", dim());
     }
     Ok(())
 }
@@ -217,7 +218,7 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
             if current_block == rule_block {
                 println!(
                     "{} Antigravity GEMINI.md rule already up-to-date",
-                    "--".dimmed()
+                    dim()
                 );
                 return Ok(());
             }
@@ -232,7 +233,7 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
             fs::write(&gemini_md_path, updated)?;
             println!(
                 "{} Antigravity GEMINI.md rule updated in {}",
-                "ok".green(),
+                ok(),
                 gemini_md_path.display()
             );
             println!(
@@ -254,7 +255,7 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
     fs::write(&gemini_md_path, updated)?;
     println!(
         "{} Antigravity GEMINI.md rule added to {}",
-        "ok".green(),
+        ok(),
         gemini_md_path.display()
     );
     println!(

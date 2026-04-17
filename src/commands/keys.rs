@@ -3,16 +3,17 @@ use colored::Colorize;
 
 use crate::keys;
 use crate::store;
+use crate::util::ok;
 
 pub fn run_init() -> Result<()> {
     let (priv_path, pub_path, kid) = keys::generate_keypair()?;
-    println!("{} Signing keypair initialized", "ok".green());
+    println!("  {} signing keypair initialized", ok());
     println!("  Private key: {} (chmod 600)", priv_path.display());
     println!("  Public key:  {}", pub_path.display());
     println!("  Key ID:      {}", kid);
     println!();
-    println!("Future ledger entries will be signed automatically after each commit.");
-    println!("Run {} to verify the audit trail.", "'agentdiff verify'".bold());
+    println!("  Future trace entries will be signed automatically after each commit.");
+    println!("  Run {} to verify the audit trail.", "agentdiff verify".cyan());
     Ok(())
 }
 
@@ -35,10 +36,10 @@ pub fn run_register(store: &crate::store::Store) -> Result<()> {
         &format!("agentdiff: register key {kid}"),
     )?;
 
-    println!("{} Key {} registered in local registry ({})", "ok".green(), kid, ref_name);
+    println!("  {} key {} registered in local registry ({})", ok(), kid, ref_name);
     println!(
         "  Run {} to push the key registry to GitHub so teammates can verify your signatures.",
-        "'agentdiff push'".bold()
+        "agentdiff push".cyan()
     );
     Ok(())
 }
@@ -64,7 +65,7 @@ pub fn run_rotate(store: &crate::store::Store) -> Result<()> {
     }
 
     let (kid, _vk) = keys::generate_keypair_at(&priv_path, &pub_path)?;
-    println!("{} New keypair generated", "ok".green());
+    println!("  {} new keypair generated", ok());
     println!("  Private key: {} (chmod 600)", priv_path.display());
     println!("  Public key:  {}", pub_path.display());
     println!("  Key ID:      {}", kid);
@@ -80,10 +81,10 @@ pub fn run_rotate(store: &crate::store::Store) -> Result<()> {
         pub_b64.trim(),
         &format!("agentdiff: register rotated key {kid}"),
     )?;
-    println!("{} New key {} registered in local registry", "ok".green(), kid);
+    println!("  {} new key {} registered in local registry", ok(), kid);
     println!(
         "  Run {} to push the updated key registry to GitHub.",
-        "'agentdiff push'".bold()
+        "agentdiff push".cyan()
     );
     Ok(())
 }

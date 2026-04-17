@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use colored::Colorize;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -7,6 +6,7 @@ use std::path::Path;
 use crate::cli::{PolicyAction, PolicyCheckArgs, PolicyFormat};
 use crate::data::AgentTrace;
 use crate::store::Store;
+use crate::util::{err, ok};
 
 #[derive(Debug, Deserialize, Default)]
 struct PolicyConfig {
@@ -99,7 +99,7 @@ fn run_check(store: &Store, args: &PolicyCheckArgs) -> Result<()> {
     }
 
     if failures.is_empty() {
-        println!("{} All policy checks passed.", "ok".green());
+        println!("{} All policy checks passed.", ok());
         Ok(())
     } else {
         for msg in &failures {
@@ -254,14 +254,14 @@ fn emit(msg: &str, args: &PolicyCheckArgs) {
 
 fn emit_ok(msg: &str, args: &PolicyCheckArgs) {
     match args.format {
-        PolicyFormat::Text => println!("{} {msg}", "ok".green()),
+        PolicyFormat::Text => println!("{} {msg}", ok()),
         PolicyFormat::GithubAnnotations => {}
     }
 }
 
 fn emit_failure(msg: &str, args: &PolicyCheckArgs) {
     match args.format {
-        PolicyFormat::Text => eprintln!("{} {msg}", "FAIL".red()),
+        PolicyFormat::Text => eprintln!("{} {msg}", err()),
         PolicyFormat::GithubAnnotations => {
             println!("::error::{msg}");
         }

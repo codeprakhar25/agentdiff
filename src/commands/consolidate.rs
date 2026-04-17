@@ -1,8 +1,8 @@
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::cli::ConsolidateArgs;
 use crate::store::{self, Store};
+use crate::util::{ok, warn};
 
 pub fn run(store: &Store, args: &ConsolidateArgs) -> Result<()> {
     let branch = args
@@ -45,7 +45,7 @@ pub fn run(store: &Store, args: &ConsolidateArgs) -> Result<()> {
     // Delete the per-branch ref (local)
     let ref_name = store::branch_ref_name(branch);
     if let Err(e) = store::delete_ref(&store.repo_root, &ref_name) {
-        eprintln!("{} could not delete local ref: {e}", "warn".yellow());
+        eprintln!("  {} could not delete local ref: {e}", warn());
     }
 
     // Best-effort push to GitHub via the Git Database API + delete remote per-branch ref.
@@ -61,16 +61,16 @@ pub fn run(store: &Store, args: &ConsolidateArgs) -> Result<()> {
         ) {
             let msg = e.to_string();
             if !msg.contains("not a GitHub URL") {
-                eprintln!("{} could not push meta ref to GitHub: {e}", "warn".yellow());
+                eprintln!("  {} could not push meta ref to GitHub: {e}", warn());
             }
         } else if let Err(e) = store::delete_remote_ref(&store.repo_root, &ref_name) {
-            eprintln!("{} could not delete remote ref: {e}", "warn".yellow());
+            eprintln!("  {} could not delete remote ref: {e}", warn());
         }
     }
 
     println!(
-        "{} Consolidated {} trace(s) from '{}' into agentdiff-meta ({} total)",
-        "ok".green(),
+        "  {} consolidated {} trace(s) from '{}' into refs/agentdiff/meta ({} total)",
+        ok(),
         new_count,
         branch,
         meta_traces.len()

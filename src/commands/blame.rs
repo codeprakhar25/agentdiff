@@ -1,20 +1,13 @@
 use crate::cli::BlameArgs;
 use crate::store::Store;
-use crate::util::agent_color_str;
+use crate::util::{agent_color_str, print_command_header, print_not_initialized};
 use anyhow::Result;
 use colored::Colorize;
 use std::collections::HashMap;
 
 pub fn run(store: &Store, args: &BlameArgs) -> Result<()> {
     if !store.is_initialized() {
-        println!(
-            "\n  {} agentdiff init not run in this repo — no captures recorded.",
-            "!".yellow()
-        );
-        println!(
-            "  Run {} to start tracking AI contributions.\n",
-            "agentdiff init".cyan()
-        );
+        print_not_initialized();
         return Ok(());
     }
 
@@ -41,11 +34,9 @@ pub fn run(store: &Store, args: &BlameArgs) -> Result<()> {
         }
     }
 
-    println!(
-        "\n  {} — {}\n",
-        "agentdiff blame".cyan().bold(),
-        rel_path.display()
-    );
+    print_command_header("blame");
+    println!("  {}", rel_path.display());
+    println!();
     println!("{}", format!("  {}", "─".repeat(100)).dimmed());
 
     for (i, line) in file_lines.iter().enumerate() {

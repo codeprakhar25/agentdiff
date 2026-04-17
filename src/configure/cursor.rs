@@ -1,6 +1,7 @@
 use crate::config::Config;
+use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
-use colored::Colorize;
+
 use std::fs;
 
 pub fn step_configure_cursor(config: &Config) -> Result<()> {
@@ -8,7 +9,7 @@ pub fn step_configure_cursor(config: &Config) -> Result<()> {
     if !hooks_path.exists() {
         println!(
             "{} ~/.cursor/hooks.json not found — skipping Cursor setup",
-            "!".yellow()
+            warn()
         );
         return Ok(());
     }
@@ -79,11 +80,11 @@ pub fn step_configure_cursor(config: &Config) -> Result<()> {
         fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_cfg)?)?;
         println!(
             "{} Cursor hooks registered in {}",
-            "ok".green(),
+            ok(),
             hooks_path.display()
         );
     } else {
-        println!("{} Cursor hooks already present", "--".dimmed());
+        println!("{} Cursor hooks already present", dim());
     }
     Ok(())
 }

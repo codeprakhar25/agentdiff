@@ -7,6 +7,7 @@ mod opencode;
 mod windsurf;
 
 use crate::config::Config;
+use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::{fs, process::Command};
@@ -95,7 +96,7 @@ pub fn run_configure(
     config.save()?;
     println!(
         "{} Config written to {}",
-        "ok".green(),
+        ok(),
         Config::config_path().display()
     );
 
@@ -161,7 +162,7 @@ fn print_configure_summary(
         if *skipped {
             println!(
                 "  {} {}  skipped (--no-{})",
-                "--".dimmed(),
+                dim(),
                 name,
                 name.replace('/', "-")
             );
@@ -169,18 +170,18 @@ fn print_configure_summary(
         }
         let config_path = path_parts.iter().fold(home.clone(), |p, part| p.join(part));
         if !config_path.exists() {
-            println!("  {} {}  not installed on this machine", "--".dimmed(), name);
+            println!("  {} {}  not installed on this machine", dim(), name);
             continue;
         }
         let registered = std::fs::read_to_string(&config_path)
             .map(|s| s.contains(marker))
             .unwrap_or(false);
         if registered {
-            println!("  {} {}  registered", "ok".green(), name);
+            println!("  {} {}  registered", ok(), name);
         } else {
             println!(
                 "  {} {}  hook missing — re-run 'agentdiff configure'",
-                "!".yellow(),
+                warn(),
                 name
             );
         }
@@ -190,7 +191,7 @@ fn print_configure_summary(
     if !no_antigravity {
         let gemini_dir = home.join(".gemini");
         if !gemini_dir.exists() {
-            println!("  {} gemini/antigravity  not installed on this machine", "--".dimmed());
+            println!("  {} gemini/antigravity  not installed on this machine", dim());
         } else {
             // Gemini CLI: settings.json hooks
             let cli_ok = std::fs::read_to_string(gemini_dir.join("settings.json"))
@@ -201,21 +202,21 @@ fn print_configure_summary(
                 .map(|s| s.contains("agentdiff: managed block"))
                 .unwrap_or(false);
             match (cli_ok, rule_ok) {
-                (true, true) => println!("  {} gemini-cli  hooks registered; antigravity  GEMINI.md rule set", "ok".green()),
-                (true, false) => println!("  {} gemini-cli  hooks ok; {} antigravity  GEMINI.md rule missing — re-run 'agentdiff configure'", "ok".green(), "!".yellow()),
-                (false, true) => println!("  {} gemini-cli  hooks missing; {} antigravity  GEMINI.md rule ok — re-run 'agentdiff configure'", "!".yellow(), "ok".green()),
-                (false, false) => println!("  {} gemini/antigravity  hooks missing — re-run 'agentdiff configure'", "!".yellow()),
+                (true, true) => println!("  {} gemini-cli  hooks registered; antigravity  GEMINI.md rule set", ok()),
+                (true, false) => println!("  {} gemini-cli  hooks ok; {} antigravity  GEMINI.md rule missing — re-run 'agentdiff configure'", ok(), warn()),
+                (false, true) => println!("  {} gemini-cli  hooks missing; {} antigravity  GEMINI.md rule ok — re-run 'agentdiff configure'", warn(), ok()),
+                (false, false) => println!("  {} gemini/antigravity  hooks missing — re-run 'agentdiff configure'", warn()),
             }
         }
     } else {
-        println!("  {} gemini/antigravity  skipped (--no-antigravity)", "--".dimmed());
+        println!("  {} gemini/antigravity  skipped (--no-antigravity)", dim());
     }
 
     // Codex: check both config.toml and hooks.json.
     if !no_codex {
         let codex_dir = home.join(".codex");
         if !codex_dir.exists() {
-            println!("  {} codex  not installed on this machine", "--".dimmed());
+            println!("  {} codex  not installed on this machine", dim());
         } else {
             let toml_ok = std::fs::read_to_string(codex_dir.join("config.toml"))
                 .map(|s| s.contains("capture-codex"))
@@ -224,14 +225,14 @@ fn print_configure_summary(
                 .map(|s| s.contains("capture-codex"))
                 .unwrap_or(false);
             match (toml_ok, hooks_ok) {
-                (true, true) => println!("  {} codex  registered (config.toml + hooks.json)", "ok".green()),
-                (true, false) => println!("  {} codex  config.toml ok, hooks.json missing — re-run 'agentdiff configure'", "!".yellow()),
-                (false, true) => println!("  {} codex  hooks.json ok, config.toml missing — re-run 'agentdiff configure'", "!".yellow()),
-                (false, false) => println!("  {} codex  hook missing — re-run 'agentdiff configure'", "!".yellow()),
+                (true, true) => println!("  {} codex  registered (config.toml + hooks.json)", ok()),
+                (true, false) => println!("  {} codex  config.toml ok, hooks.json missing — re-run 'agentdiff configure'", warn()),
+                (false, true) => println!("  {} codex  hooks.json ok, config.toml missing — re-run 'agentdiff configure'", warn()),
+                (false, false) => println!("  {} codex  hook missing — re-run 'agentdiff configure'", warn()),
             }
         }
     } else {
-        println!("  {} codex  skipped (--no-codex)", "--".dimmed());
+        println!("  {} codex  skipped (--no-codex)", dim());
     }
 
     // OpenCode: platform-aware path (macOS: ~/Library/Application Support, Linux: ~/.config)
@@ -244,21 +245,21 @@ fn print_configure_summary(
                     .map(|s| s.contains("agentdiff"))
                     .unwrap_or(false);
                 if registered {
-                    println!("  {} opencode  registered", "ok".green());
+                    println!("  {} opencode  registered", ok());
                 } else {
                     println!(
                         "  {} opencode  hook missing — re-run 'agentdiff configure'",
-                        "!".yellow()
+                        warn()
                     );
                 }
             }
             _ => println!(
                 "  {} opencode  not installed on this machine",
-                "--".dimmed()
+                dim()
             ),
         }
     } else {
-        println!("  {} opencode  skipped (--no-opencode)", "--".dimmed());
+        println!("  {} opencode  skipped (--no-opencode)", dim());
     }
 
     // Copilot: directory-based check across all VS Code install locations.
@@ -292,18 +293,18 @@ fn print_configure_summary(
         if !any_vscode {
             println!(
                 "  {} copilot  not installed on this machine",
-                "--".dimmed()
+                dim()
             );
         } else if found {
-            println!("  {} copilot  registered", "ok".green());
+            println!("  {} copilot  registered", ok());
         } else {
             println!(
                 "  {} copilot  extension not found — re-run 'agentdiff configure'",
-                "!".yellow()
+                warn()
             );
         }
     } else {
-        println!("  {} copilot  skipped (--no-copilot)", "--".dimmed());
+        println!("  {} copilot  skipped (--no-copilot)", dim());
     }
 
     println!(
@@ -321,7 +322,7 @@ fn check_python3() -> Result<()> {
         Ok(out) if out.status.success() => {
             let ver = String::from_utf8_lossy(&out.stdout);
             let ver = ver.trim();
-            println!("{} {python_cmd} found: {ver}", "ok".green());
+            println!("{} {python_cmd} found: {ver}", ok());
             Ok(())
         }
         _ => Err(anyhow::anyhow!(
@@ -339,7 +340,7 @@ fn step_create_dirs(config: &Config) -> Result<()> {
     ];
     for dir in &dirs_to_create {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        println!("{} mkdir {}", "ok".green().dimmed(), dir.display());
+        println!("{} mkdir {}", dim(), dir.display());
     }
     Ok(())
 }
@@ -363,9 +364,9 @@ fn step_install_scripts(config: &Config) -> Result<()> {
         let existing = fs::read_to_string(&dest).unwrap_or_default();
         if existing != *content {
             fs::write(&dest, content).with_context(|| format!("writing {}", dest.display()))?;
-            println!("{} installed {}", "ok".green(), dest.display());
+            println!("{} installed {}", ok(), dest.display());
         } else {
-            println!("{} up-to-date {}", "--".dimmed(), dest.display());
+            println!("{} up-to-date {}", dim(), dest.display());
         }
     }
     Ok(())

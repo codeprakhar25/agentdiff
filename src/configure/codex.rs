@@ -1,13 +1,14 @@
 use crate::config::Config;
+use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
-use colored::Colorize;
+
 use std::fs;
 
 pub fn step_configure_codex(config: &Config) -> Result<()> {
     let codex_dir = dirs::home_dir().unwrap().join(".codex");
     let config_path = codex_dir.join("config.toml");
     if !codex_dir.exists() && !config_path.exists() {
-        println!("{} ~/.codex not found — skipping Codex setup", "!".yellow());
+        println!("{} ~/.codex not found — skipping Codex setup", warn());
         return Ok(());
     }
 
@@ -99,11 +100,11 @@ fn step_configure_codex_toml(
         fs::write(config_path, toml::to_string_pretty(&cfg_val)?)?;
         println!(
             "{} Codex config.toml updated (notify + codex_hooks=true) in {}",
-            "ok".green(),
+            ok(),
             config_path.display()
         );
     } else {
-        println!("{} Codex config.toml already up-to-date", "--".dimmed());
+        println!("{} Codex config.toml already up-to-date", dim());
     }
     Ok(())
 }
@@ -140,7 +141,7 @@ fn step_configure_codex_hooks(config: &Config, codex_dir: &std::path::Path) -> R
     if hooks_val.is_array() {
         println!(
             "{} Codex hooks.json: migrating old flat-array format to event-keyed format",
-            "!".yellow()
+            warn()
         );
         *hooks_val = serde_json::json!({});
     }
@@ -219,13 +220,13 @@ fn step_configure_codex_hooks(config: &Config, codex_dir: &std::path::Path) -> R
         fs::write(&hooks_path, serde_json::to_string_pretty(&root)?)?;
         println!(
             "{} Codex hooks.json configured (UserPromptSubmit + Stop) in {}",
-            "ok".green(),
+            ok(),
             hooks_path.display()
         );
     } else {
         println!(
             "{} Codex hooks.json already up-to-date in {}",
-            "--".dimmed(),
+            dim(),
             hooks_path.display()
         );
     }

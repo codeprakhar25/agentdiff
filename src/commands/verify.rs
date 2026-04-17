@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use colored::Colorize;
 use ed25519_dalek::VerifyingKey;
 
 use crate::cli::VerifyArgs;
 use crate::keys;
 use crate::store::Store;
+use crate::util::{err, warn};
 
 pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
     // Build a key cache seeded with the local key (if present).
@@ -27,7 +27,7 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
         eprintln!(
             "{} no local key found and key registry may be empty — \
              run 'agentdiff keys init' or 'agentdiff keys register'",
-            "warn".yellow()
+            warn()
         );
     }
 
@@ -60,7 +60,7 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
                 None => {
                     eprintln!(
                         "{} base SHA {} not found in traces; verifying all entries",
-                        "warn".yellow(),
+                        warn(),
                         &base[..base.len().min(8)]
                     );
                     records.iter().collect()
@@ -89,11 +89,11 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
             None => {
                 missing_sig += 1;
                 if args.strict {
-                    eprintln!("{} {} — no signature (--strict)", "FAIL".red(), short);
+                    eprintln!("{} {} — no signature (--strict)", err(), short);
                     print_summary(to_verify.len(), valid, missing_sig, invalid_sig);
                     std::process::exit(1);
                 } else {
-                    eprintln!("{} {} — no signature", "warn".yellow(), short);
+                    eprintln!("{} {} — no signature", warn(), short);
                 }
                 continue;
             }
@@ -115,7 +115,7 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
                         eprintln!(
                             "{} {} — key_id {} not found locally or in registry \
                              (run 'agentdiff keys register' on the signing machine)",
-                            "FAIL".red(),
+                            err(),
                             short,
                             &kid[..kid.len().min(16)]
                         );
@@ -135,7 +135,7 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
             invalid_sig += 1;
             eprintln!(
                 "{} {} — no key_id in signature and no local key available",
-                "FAIL".red(),
+                err(),
                 short
             );
             if args.strict {
@@ -151,7 +151,7 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
             }
             Err(e) => {
                 invalid_sig += 1;
-                eprintln!("{} {} — {}", "FAIL".red(), short, e);
+                eprintln!("{} {} — {}", err(), short, e);
                 if args.strict {
                     print_summary(to_verify.len(), valid, missing_sig, invalid_sig);
                     std::process::exit(2);

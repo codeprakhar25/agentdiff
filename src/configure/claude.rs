@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::util::{dim, ok};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
@@ -72,11 +73,11 @@ pub fn step_configure_claude(config: &Config) -> Result<()> {
         fs::write(&settings_path, updated)?;
         println!(
             "{} Claude Code hook configured in {}",
-            "ok".green(),
+            ok(),
             settings_path.display()
         );
     } else {
-        println!("{} Claude Code hook already present", "--".dimmed());
+        println!("{} Claude Code hook already present", dim());
     }
     Ok(())
 }
@@ -122,7 +123,7 @@ pub fn step_configure_mcp_claude() -> Result<()> {
         fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
         println!(
             "{} agentdiff-mcp registered in {}",
-            "ok".green(),
+            ok(),
             settings_path.display()
         );
         println!(
@@ -130,7 +131,7 @@ pub fn step_configure_mcp_claude() -> Result<()> {
             "    Restart Claude Code to activate the MCP server.".dimmed()
         );
     } else {
-        println!("{} agentdiff-mcp already registered in Claude Code", "--".dimmed());
+        println!("{} agentdiff-mcp already registered in Claude Code", dim());
     }
     Ok(())
 }

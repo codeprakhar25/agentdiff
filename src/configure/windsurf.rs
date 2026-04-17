@@ -1,6 +1,7 @@
 use crate::config::Config;
+use crate::util::{dim, ok};
 use anyhow::{Context, Result};
-use colored::Colorize;
+
 use std::fs;
 
 pub fn step_configure_windsurf(config: &Config) -> Result<()> {
@@ -82,13 +83,13 @@ pub fn step_configure_windsurf(config: &Config) -> Result<()> {
         fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_cfg)?)?;
         println!(
             "{} Windsurf hooks configured in {}",
-            "ok".green(),
+            ok(),
             hooks_path.display()
         );
     } else {
         println!(
             "{} Windsurf hooks already present in {}",
-            "--".dimmed(),
+            dim(),
             hooks_path.display()
         );
     }

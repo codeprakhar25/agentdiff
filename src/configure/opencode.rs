@@ -1,6 +1,7 @@
 use crate::config::Config;
+use crate::util::{dim, ok, warn};
 use anyhow::Result;
-use colored::Colorize;
+
 use std::fs;
 
 const OPENCODE_PLUGIN_TEMPLATE: &str = include_str!("../../scripts/opencode-agentdiff.ts");
@@ -28,7 +29,7 @@ pub fn step_configure_opencode(config: &Config) -> Result<()> {
     {
         println!(
             "{} {} exists and is not managed by agentdiff — skipping",
-            "!".yellow(),
+            warn(),
             plugin_path.display()
         );
         return Ok(());
@@ -39,13 +40,13 @@ pub fn step_configure_opencode(config: &Config) -> Result<()> {
         fs::write(&plugin_path, plugin_content)?;
         println!(
             "{} OpenCode plugin configured in {}",
-            "ok".green(),
+            ok(),
             plugin_path.display()
         );
     } else {
         println!(
             "{} OpenCode plugin already present in {}",
-            "--".dimmed(),
+            dim(),
             plugin_path.display()
         );
     }

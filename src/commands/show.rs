@@ -1,18 +1,12 @@
 use crate::cli::ShowArgs;
 use crate::store::Store;
+use crate::util::{ok, print_command_header, print_not_initialized};
 use anyhow::Result;
 use colored::Colorize;
 
 pub fn run(store: &Store, args: &ShowArgs) -> Result<()> {
     if !store.is_initialized() {
-        println!(
-            "\n  {} agentdiff init not run in this repo — no captures recorded.",
-            "!".yellow()
-        );
-        println!(
-            "  Run {} to start tracking AI contributions.\n",
-            "agentdiff init".cyan()
-        );
+        print_not_initialized();
         return Ok(());
     }
 
@@ -32,12 +26,8 @@ pub fn run(store: &Store, args: &ShowArgs) -> Result<()> {
 
     let meta = trace.agentdiff_metadata();
 
-    println!();
-    println!(
-        "  {} — {}",
-        "agentdiff show".cyan().bold(),
-        trace.id.dimmed()
-    );
+    print_command_header("show");
+    println!("  {}", trace.id.dimmed());
     println!();
     println!("  Trace ID:  {}", trace.id);
     println!("  Version:   {}", trace.version);
@@ -115,7 +105,7 @@ pub fn run(store: &Store, args: &ShowArgs) -> Result<()> {
 
     if trace.sig.is_some() {
         println!();
-        println!("  {} Signed", "✓".green());
+        println!("  {} signed", ok());
     }
 
     println!();

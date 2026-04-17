@@ -1,6 +1,49 @@
 use anyhow::Context;
 use colored::*;
 
+// ── Output prefixes ─────────────────────────────────────────────────────────
+//
+// All CLI output uses these helpers so `ok`, `warn`, and `error` lines look
+// identical across commands. Keep prefixes to a fixed width so columns align.
+
+pub fn ok() -> ColoredString {
+    "ok".green()
+}
+
+pub fn warn() -> ColoredString {
+    "warn".yellow()
+}
+
+pub fn err() -> ColoredString {
+    "error".red()
+}
+
+pub fn dim() -> ColoredString {
+    "--".dimmed()
+}
+
+/// Standard command header: leading blank line, then `  agentdiff <name>`.
+pub fn print_command_header(name: &str) {
+    println!();
+    println!("  {}", format!("agentdiff {name}").bold().cyan());
+    println!();
+}
+
+/// Single source of truth for the "init not run" hint used by every query
+/// command. Keeps the message consistent if it ever changes.
+pub fn print_not_initialized() {
+    println!();
+    println!(
+        "  {} agentdiff init not run in this repo — no captures recorded.",
+        warn()
+    );
+    println!(
+        "  Run {} to start tracking AI contributions.",
+        "agentdiff init".cyan()
+    );
+    println!();
+}
+
 pub fn agent_color(agent: &str) -> Color {
     match agent {
         "claude-code" => Color::BrightBlue,
@@ -56,22 +99,4 @@ pub fn find_repo_root() -> anyhow::Result<std::path::PathBuf> {
     } else {
         anyhow::bail!("Not in a git repository (run git init or cd to a repo)")
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum AgentDiffError {
-    #[error("Not a git repository: {path}")]
-    NotAGitRepo { path: String },
-
-    #[error("File not found: {path}")]
-    FileNotFound { path: String },
-
-    #[error("Config not found at {path}; run `agentdiff init` first")]
-    ConfigMissing { path: String },
-
-    #[error("Hook already installed by a different tool at {path}")]
-    HookConflict { path: String },
-
-    #[error("No attribution data found; make some edits and commit")]
-    NoEntries,
 }

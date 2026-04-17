@@ -1,8 +1,8 @@
 use anyhow::Result;
-use colored::Colorize;
 
 use crate::cli::PushArgs;
 use crate::store::{self, Store};
+use crate::util::ok;
 
 pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
     let branch = match &args.branch {
@@ -83,8 +83,8 @@ pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
 
     if !args.quiet {
         println!(
-            "{} Pushed {} trace(s) for branch '{}' ({} total on ref)",
-            "ok".green(),
+            "  {} pushed {} trace(s) for branch '{}' ({} total on ref)",
+            ok(),
             new_count,
             branch,
             remote_traces.len()

@@ -1,19 +1,12 @@
 use crate::cli::DiffArgs;
 use crate::store::Store;
-use crate::util::agent_color_str;
+use crate::util::{agent_color_str, print_command_header, print_not_initialized};
 use anyhow::Result;
 use colored::Colorize;
 
 pub fn run(store: &Store, args: &DiffArgs) -> Result<()> {
     if !store.is_initialized() {
-        println!(
-            "\n  {} agentdiff init not run in this repo — no captures recorded.",
-            "!".yellow()
-        );
-        println!(
-            "  Run {} to start tracking AI contributions.\n",
-            "agentdiff init".cyan()
-        );
+        print_not_initialized();
         return Ok(());
     }
 
@@ -24,7 +17,9 @@ pub fn run(store: &Store, args: &DiffArgs) -> Result<()> {
     let diff_output = run_git_diff(&store.repo_root, commit)?;
     let changed = parse_diff_hunks(&diff_output);
 
-    println!("\n  {} — {}\n", "agentdiff diff".cyan().bold(), commit);
+    print_command_header("diff");
+    println!("  {}", commit);
+    println!();
 
     let mut total_changed = 0;
     let mut total_ai = 0;

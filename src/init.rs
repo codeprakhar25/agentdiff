@@ -1,18 +1,14 @@
 use crate::config::{Config, RepoConfig};
+use crate::util::{ok, print_command_header, warn};
 use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use std::{fs, path::Path, process::Command};
 
 /// Initialize agentdiff in this repository — installs git hooks and creates the ledger.
 /// Run `agentdiff configure` first to set up global agent hooks.
-pub fn run_init(
-    repo_root: &Path,
-    config: &mut Config,
-    no_git_hook: bool,
-    migrate: bool,
-) -> Result<()> {
-    println!("{}", "agentdiff init".bold().cyan());
-    println!("Repo: {}", repo_root.display());
+pub fn run_init(repo_root: &Path, config: &mut Config, no_git_hook: bool) -> Result<()> {
+    print_command_header("init");
+    println!("  Repo: {}", repo_root.display());
     println!();
 
     // Warn if configure hasn't been run yet (scripts dir empty or missing).
@@ -20,8 +16,9 @@ pub fn run_init(
     let capture_claude = scripts_dir.join("capture-claude.py");
     if !capture_claude.exists() {
         println!(
-            "{} Agent hooks not configured yet. Run 'agentdiff configure' first to set up global hooks.",
-            "!".yellow()
+            "  {} agent hooks not configured — run '{}' first",
+            warn(),
+            "agentdiff configure".cyan()
         );
         println!();
     }
@@ -40,21 +37,13 @@ pub fn run_init(
     // Step 3 — save updated config
     config.save()?;
     println!(
-        "{} Config written to {}",
-        "ok".green(),
+        "  {} config written to {}",
+        ok(),
         Config::config_path().display()
     );
 
-    // In impl-1, migration is intentionally disabled by default.
-    if migrate {
-        println!(
-            "{} Legacy migration is not part of impl-1; skipping.",
-            "!".yellow()
-        );
-    }
-
     println!();
-    println!("{}", "agentdiff init complete.".bold().green());
+    println!("  {}", "init complete".bold().green());
     Ok(())
 }
 
@@ -194,8 +183,8 @@ exit 0
     )?;
 
     println!(
-        "{} installed git hooks (pre-commit, post-commit, pre-push)",
-        "ok".green()
+        "  {} installed git hooks (pre-commit, post-commit, pre-push)",
+        ok()
     );
     Ok(())
 }
@@ -224,17 +213,17 @@ fn step_configure_refspec(repo_root: &Path) -> Result<()> {
             .status()
             .context("adding remote.origin.fetch agentdiff refspec")?;
         if status.success() {
-            println!("{} added fetch refspec for refs/agentdiff/*", "ok".green());
+            println!("  {} added fetch refspec for refs/agentdiff/*", ok());
         } else {
             println!(
-                "{} could not add fetch refspec (no remote origin?)",
-                "!".yellow()
+                "  {} could not add fetch refspec (no remote origin?)",
+                warn()
             );
         }
     } else {
         println!(
-            "{} fetch refspec for refs/agentdiff/* already present",
-            "--".dimmed()
+            "  {} fetch refspec for refs/agentdiff/* already present",
+            crate::util::dim()
         );
     }
 
@@ -249,7 +238,7 @@ fn install_managed_hook(path: &Path, marker: &str, content: &str) -> Result<()> 
         } else {
             let combined = format!("{}\n\n{}", existing.trim_end(), content);
             fs::write(path, combined)?;
-            println!("{} appended to existing {}", "ok".green(), path.display());
+            println!("  {} appended to existing {}", ok(), path.display());
         }
     } else {
         fs::write(path, content)?;
@@ -271,7 +260,7 @@ fn step_register_repo(repo_root: &Path, config: &mut Config) -> Result<()> {
             path: repo_root.to_path_buf(),
             slug,
         });
-        println!("{} Repo registered in config", "ok".green());
+        println!("  {} repo registered in config", ok());
     }
 
     fs::create_dir_all(Config::repo_session_dir(repo_root))?;

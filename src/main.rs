@@ -66,16 +66,13 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Init(args) => {
             let mut cfg = config;
-            init::run_init(&repo_root, &mut cfg, args.no_git_hook, args.migrate)
+            init::run_init(&repo_root, &mut cfg, args.no_git_hook)
         }
         Command::List(args) => commands::list::run(&store, &args),
         Command::Blame(args) => commands::blame::run(&store, &args),
-        Command::Stats(args) => commands::stats::run(&store, &args),
         Command::Report(args) => commands::report::run(&store, &args),
         Command::Diff(args) => commands::diff::run(&store, &args),
-        Command::Log(args) => commands::log::run(&store, &args),
         Command::Show(args) => commands::show::run(&store, &args),
-        Command::Ledger(args) => commands::ledger::run(&store, &args),
         Command::Config(args) => commands::config_cmd::run(&config, &args),
         Command::Keys(args) => match args.action {
             cli::KeysAction::Init => commands::keys::run_init(),
@@ -84,11 +81,9 @@ fn main() -> anyhow::Result<()> {
         },
         Command::Verify(args) => commands::verify::run(&store, &args),
         Command::Policy(args) => commands::policy::run(&store, &args.action),
-        Command::Export(args) => commands::export::run(&store, &args),
-        Command::Status => commands::status::run(&store),
+        Command::Status(args) => commands::status::run(&store, &args),
         Command::Push(args) => commands::push::run(&store, &args),
         Command::Consolidate(args) => commands::consolidate::run(&store, &args),
-        Command::RemoteStatus(args) => commands::remote_status::run(&store, &args),
         Command::SignEntry => commands::sign_entry::run(&store),
     }
 }

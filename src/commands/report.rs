@@ -1,24 +1,35 @@
-use crate::cli::ReportArgs;
+use crate::cli::{ReportArgs, ReportFormat};
 use crate::data::Entry;
 use crate::store::Store;
+use crate::util::{agent_color_str, print_command_header, print_not_initialized};
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use colored::Colorize;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
 pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
+    // Text format reads like the old `stats` — needs initialization check + header.
+    if matches!(args.format, ReportFormat::Text) && !store.is_initialized() {
+        print_not_initialized();
+        return Ok(());
+    }
+
+    // JSONL format wants pure machine output — skip even the filter step noise.
+    if matches!(args.format, ReportFormat::Jsonl) {
+        return run_jsonl(store, args);
+    }
+
     let mut entries = store.load_entries()?;
 
     if let Some(ref since) = args.since {
-        if let Some(since_ts) = chrono::DateTime::parse_from_rfc3339(since)
+        if let Ok(since_ts) = chrono::DateTime::parse_from_rfc3339(since)
             .map(|dt| dt.with_timezone(&chrono::Utc))
-            .ok()
         {
             entries.retain(|e| e.timestamp >= since_ts);
         }
     }
-
     if let Some(ref agent) = args.agent {
         entries.retain(|e| e.agent.contains(agent.as_str()));
     }
@@ -27,30 +38,172 @@ pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
     }
 
     match args.format {
-        crate::cli::ReportFormat::Markdown => {
+        ReportFormat::Text => run_text(store, &entries, args),
+        ReportFormat::Markdown => {
             let md = markdown_report(&entries)?;
-            write_or_stdout(args.out_md.as_deref(), &md)?;
+            write_or_stdout(args.out.as_deref(), &md)
         }
-        crate::cli::ReportFormat::Annotations => {
-            let text = format_annotations(&entries, args.out_annotations.is_none())?;
-            write_or_stdout(args.out_annotations.as_deref(), &text)?;
+        ReportFormat::Annotations => {
+            let json = format_annotations(&entries, args.out.is_none())?;
+            write_or_stdout(args.out.as_deref(), &json)
         }
-        crate::cli::ReportFormat::Both => {
-            let md = markdown_report(&entries)?;
-            let ann_stdout = args.out_annotations.is_none();
-            let json = format_annotations(&entries, ann_stdout)?;
-            let md_to_file = args.out_md.is_some();
-            let ann_to_file = args.out_annotations.is_some();
-            write_or_stdout(args.out_md.as_deref(), &md)?;
-            if !md_to_file && !ann_to_file {
-                writeln!(io::stdout())?;
-            }
-            write_or_stdout(args.out_annotations.as_deref(), &json)?;
+        ReportFormat::Jsonl => unreachable!(),
+    }
+}
+
+// ── Text (replaces `stats`) ──────────────────────────────────────────────────
+
+fn run_text(store: &Store, entries: &[Entry], args: &ReportArgs) -> Result<()> {
+    let mut agent_lines: HashMap<String, u32> = HashMap::new();
+    let mut file_agent_lines: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    let mut ai_lines_by_file: HashMap<String, HashSet<u32>> = HashMap::new();
+
+    for e in entries {
+        let agent = &e.agent;
+        for &ln in &e.lines {
+            *agent_lines.entry(agent.clone()).or_default() += 1;
+            ai_lines_by_file
+                .entry(e.file.clone())
+                .or_default()
+                .insert(ln);
+            *file_agent_lines
+                .entry(e.file.clone())
+                .or_default()
+                .entry(agent.clone())
+                .or_default() += 1;
         }
     }
 
+    for (file, ai_set) in &ai_lines_by_file {
+        let abs = store.repo_root.join(file);
+        if let Ok(content) = fs::read_to_string(&abs) {
+            let total = content.lines().count() as u32;
+            let human = total.saturating_sub(ai_set.len() as u32);
+            if human > 0 {
+                *agent_lines.entry("human".into()).or_default() += human;
+                *file_agent_lines
+                    .entry(file.clone())
+                    .or_default()
+                    .entry("human".into())
+                    .or_default() += human;
+            }
+        }
+    }
+
+    let total_lines: u32 = agent_lines.values().sum();
+
+    print_command_header("report");
+    println!("  Total lines tracked: {}", total_lines);
+    println!();
+
+    println!("  By Agent:");
+    let mut sorted: Vec<_> = agent_lines.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(a.1));
+    for (agent, count) in sorted {
+        let pct = pct(*count, total_lines);
+        let bar = "█".repeat((pct / 5) as usize);
+        println!(
+            "    {} {:>6} ({:>3}%) {}",
+            agent_color_str(agent),
+            count,
+            pct,
+            bar.dimmed()
+        );
+    }
+
+    if args.by_file {
+        println!();
+        println!("  By File:");
+        let mut file_sorted: Vec<_> = file_agent_lines.iter().collect();
+        file_sorted.sort_by(|a, b| {
+            let a_total: u32 = a.1.values().sum();
+            let b_total: u32 = b.1.values().sum();
+            b_total.cmp(&a_total)
+        });
+
+        for (file, agents) in file_sorted.iter().take(10) {
+            let file_total: u32 = agents.values().sum();
+            let ai_total: u32 = agents
+                .iter()
+                .filter(|(a, _)| *a != "human")
+                .map(|(_, c)| c)
+                .sum();
+            let ai_pct = pct(ai_total, file_total);
+
+            let dominant = agents
+                .iter()
+                .max_by_key(|(_, c)| *c)
+                .map(|(a, _)| a.clone())
+                .unwrap_or_else(|| "human".to_string());
+
+            println!(
+                "    {:<40} {:>5} lines ({:>3}% AI) — {}",
+                file,
+                file_total,
+                ai_pct,
+                agent_color_str(&dominant)
+            );
+        }
+    }
+
+    if args.by_model {
+        println!();
+        println!("  By Model:");
+        let mut model_counts: HashMap<String, u32> = HashMap::new();
+        for e in entries {
+            *model_counts.entry(e.model.clone()).or_default() += e.lines.len() as u32;
+        }
+        let mut model_sorted: Vec<_> = model_counts.iter().collect();
+        model_sorted.sort_by(|a, b| b.1.cmp(a.1));
+        for (model, count) in model_sorted.iter().take(10) {
+            println!(
+                "    {:<30} {:>6} ({:>3}%)",
+                model,
+                count,
+                pct(**count, total_lines)
+            );
+        }
+    }
+
+    println!();
     Ok(())
 }
+
+fn pct(part: u32, whole: u32) -> u32 {
+    if whole == 0 {
+        0
+    } else {
+        (part as f64 / whole as f64 * 100.0) as u32
+    }
+}
+
+// ── JSONL (replaces `export`) ────────────────────────────────────────────────
+
+fn run_jsonl(store: &Store, args: &ReportArgs) -> Result<()> {
+    let traces = store.load_all_traces()?;
+    let mut buf = String::new();
+    for trace in &traces {
+        buf.push_str(&serde_json::to_string(trace)?);
+        buf.push('\n');
+    }
+    match &args.out {
+        Some(path) => {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            fs::write(path, buf.as_bytes())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        None => {
+            print!("{buf}");
+            io::stdout().flush()?;
+        }
+    }
+    Ok(())
+}
+
+// ── Markdown + GitHub annotations (original `report` formats) ────────────────
 
 fn write_or_stdout(path: Option<&Path>, content: &str) -> Result<()> {
     match path {
@@ -59,7 +212,8 @@ fn write_or_stdout(path: Option<&Path>, content: &str) -> Result<()> {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            fs::write(p, content.as_bytes()).with_context(|| format!("writing {}", p.display()))?;
+            fs::write(p, content.as_bytes())
+                .with_context(|| format!("writing {}", p.display()))?;
         }
         None => {
             print!("{content}");
@@ -207,7 +361,6 @@ mod tests {
             edits: None,
             committed: true,
             commit_hash: "abc".to_string(),
-            batch_author: String::new(),
         }
     }
 

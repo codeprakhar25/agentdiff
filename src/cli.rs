@@ -30,23 +30,14 @@ pub enum Command {
     /// Show line-level attribution for a file (like git-blame)
     Blame(BlameArgs),
 
-    /// Show aggregate statistics across agents and files
-    Stats(StatsArgs),
-
-    /// Generate CI report (markdown or GitHub annotations)
+    /// Aggregate report in text, markdown, annotations, or JSONL format
     Report(ReportArgs),
 
     /// Show attribution changes introduced by a commit range
     Diff(DiffArgs),
 
-    /// Show chronological history of AI contributions
-    Log(LogArgs),
-
     /// Show one trace entry by UUID or commit SHA
     Show(ShowArgs),
-
-    /// Ledger maintenance commands
-    Ledger(LedgerArgs),
 
     /// Manage global and repo-level configuration
     Config(ConfigArgs),
@@ -60,11 +51,8 @@ pub enum Command {
     /// Evaluate agentdiff policy rules
     Policy(PolicyArgs),
 
-    /// Export ledger in alternative formats (e.g., Agent Trace JSONL)
-    Export(ExportArgs),
-
     /// Show current agentdiff health (hooks, keys, traces)
-    Status,
+    Status(StatusArgs),
 
     /// Push local traces to per-branch ref on origin
     Push(PushArgs),
@@ -72,12 +60,20 @@ pub enum Command {
     /// Consolidate per-branch ref traces into agentdiff-meta (used by CI)
     Consolidate(ConsolidateArgs),
 
-    /// Show remote agentdiff ref state (refs/agentdiff/* on origin)
-    RemoteStatus(RemoteStatusArgs),
-
     /// [internal] Sign the last trace entry — called by the post-commit hook
     #[command(hide = true)]
     SignEntry,
+}
+
+#[derive(Args, Debug)]
+pub struct StatusArgs {
+    /// Show remote agentdiff ref state (refs/agentdiff/* on origin)
+    #[arg(long)]
+    pub remote: bool,
+
+    /// With --remote: skip fetching trace counts for each ref (faster)
+    #[arg(long)]
+    pub no_fetch: bool,
 }
 
 #[derive(Args, Debug)]
@@ -120,10 +116,6 @@ pub struct InitArgs {
     /// Skip git pre-commit and post-commit hook setup
     #[arg(long)]
     pub no_git_hook: bool,
-
-    /// Legacy migration flag (disabled in impl-1)
-    #[arg(long)]
-    pub migrate: bool,
 }
 
 #[derive(Args, Debug)]
@@ -140,9 +132,17 @@ pub struct ListArgs {
     #[arg(long)]
     pub file: Option<String>,
 
-    /// Limit output to N entries
+    /// Limit output to N entries (or N commits with --by-commit)
     #[arg(short = 'n', long)]
     pub limit: Option<usize>,
+
+    /// Group entries by commit and display chronologically (replaces `log`)
+    #[arg(long)]
+    pub by_commit: bool,
+
+    /// With --by-commit: show full prompt text
+    #[arg(long)]
+    pub full_prompt: bool,
 }
 
 #[derive(Args, Debug)]
@@ -156,33 +156,14 @@ pub struct BlameArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct StatsArgs {
-    /// Show per-file breakdown
-    #[arg(long)]
-    pub by_file: bool,
-
-    /// Show per-model breakdown
-    #[arg(long)]
-    pub by_model: bool,
-
-    /// Only include entries since this ISO timestamp
-    #[arg(long)]
-    pub since: Option<String>,
-}
-
-#[derive(Args, Debug)]
 pub struct ReportArgs {
-    /// Output format: markdown | annotations | both
-    #[arg(long, default_value = "markdown")]
+    /// Output format: text (default, terminal-friendly) | markdown | annotations | jsonl
+    #[arg(long, default_value = "text")]
     pub format: ReportFormat,
 
-    /// Write markdown to this file instead of stdout
+    /// Write output to a file instead of stdout
     #[arg(long)]
-    pub out_md: Option<std::path::PathBuf>,
-
-    /// Write annotations JSON to this file instead of stdout
-    #[arg(long)]
-    pub out_annotations: Option<std::path::PathBuf>,
+    pub out: Option<std::path::PathBuf>,
 
     /// Only include entries after this ISO timestamp
     #[arg(long)]
@@ -195,6 +176,14 @@ pub struct ReportArgs {
     /// Only include entries whose model name contains this substring
     #[arg(long)]
     pub model: Option<String>,
+
+    /// With --format=text: also show per-file breakdown
+    #[arg(long)]
+    pub by_file: bool,
+
+    /// With --format=text: also show per-model breakdown
+    #[arg(long)]
+    pub by_model: bool,
 }
 
 #[derive(Args, Debug)]
@@ -205,21 +194,6 @@ pub struct DiffArgs {
     /// Show only AI-attributed lines
     #[arg(long)]
     pub ai_only: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct LogArgs {
-    /// Filter by agent
-    #[arg(long)]
-    pub agent: Option<String>,
-
-    /// Limit to N entries
-    #[arg(short = 'n', long, default_value = "20")]
-    pub limit: usize,
-
-    /// Show full prompt text
-    #[arg(long)]
-    pub full_prompt: bool,
 }
 
 #[derive(Args, Debug)]
@@ -240,13 +214,6 @@ pub struct PushArgs {
 }
 
 #[derive(Args, Debug)]
-pub struct RemoteStatusArgs {
-    /// Only show ref names and SHAs; skip fetching trace counts (fast)
-    #[arg(long)]
-    pub no_fetch: bool,
-}
-
-#[derive(Args, Debug)]
 pub struct ConsolidateArgs {
     /// Branch whose traces to consolidate into agentdiff-meta
     #[arg(long)]
@@ -255,20 +222,6 @@ pub struct ConsolidateArgs {
     /// Also push agentdiff-meta and delete the remote per-branch ref
     #[arg(long)]
     pub push: bool,
-}
-
-#[derive(Args, Debug)]
-pub struct LedgerArgs {
-    #[command(subcommand)]
-    pub action: LedgerAction,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum LedgerAction {
-    /// Normalize, sort, and deduplicate ledger.jsonl
-    Repair,
-    /// Import legacy refs/notes/agentdiff records into ledger.jsonl
-    ImportNotes,
 }
 
 #[derive(Args, Debug)]
@@ -281,19 +234,22 @@ pub struct ConfigArgs {
 pub enum ConfigAction {
     /// Show current config
     Show,
-    /// Set a config value: spillover_dir | scripts_dir | auto_amend_ledger
+    /// Set a config value: scripts_dir | capture_prompts
     Set { key: String, value: String },
     /// Get a config value
     Get { key: String },
-    /// Add a repo to the config
-    AddRepo { path: std::path::PathBuf },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum)]
 pub enum ReportFormat {
+    /// Terminal display (replaces `stats`)
+    Text,
+    /// Markdown report
     Markdown,
+    /// GitHub check annotations JSON
     Annotations,
-    Both,
+    /// Agent Trace JSONL (replaces `export`)
+    Jsonl,
 }
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
@@ -358,17 +314,3 @@ pub enum PolicyFormat {
     GithubAnnotations,
 }
 
-// ── Export ────────────────────────────────────────────────────────────────────
-
-#[derive(Args, Debug)]
-pub struct ExportArgs {
-    /// Output format
-    #[arg(long, default_value = "agent-trace")]
-    pub format: ExportFormat,
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum ExportFormat {
-    /// Cognition Agent Trace JSONL (specVersion 0.1)
-    AgentTrace,
-}

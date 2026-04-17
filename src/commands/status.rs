@@ -1,12 +1,18 @@
 use anyhow::Result;
 use colored::Colorize;
+use std::process::Command;
 
+use crate::cli::StatusArgs;
 use crate::keys;
-use crate::store::Store;
+use crate::store::{self, Store};
+use crate::util::{dim, ok, print_command_header, warn};
 
-pub fn run(store: &Store) -> Result<()> {
-    println!("{}", "agentdiff status".bold().cyan());
-    println!();
+pub fn run(store: &Store, args: &StatusArgs) -> Result<()> {
+    if args.remote {
+        return run_remote(store, args);
+    }
+
+    print_command_header("status");
 
     print_init_status(store);
     print_keys_status();
@@ -18,13 +24,42 @@ pub fn run(store: &Store) -> Result<()> {
     Ok(())
 }
 
+/// Renders a status prefix padded to a fixed width so columns line up.
+/// Widths: ok=2, warn=4, error=5 → pad everything to 5 chars.
+fn prefix(label: colored::ColoredString) -> String {
+    let visible_len = strip_ansi(&label.to_string()).chars().count();
+    let pad = 5usize.saturating_sub(visible_len);
+    format!("{}{}", label, " ".repeat(pad))
+}
+
+fn strip_ansi(s: &str) -> String {
+    // cheap ANSI escape stripper for length calculation
+    let mut out = String::with_capacity(s.len());
+    let mut in_esc = false;
+    for c in s.chars() {
+        if in_esc {
+            if c == 'm' {
+                in_esc = false;
+            }
+        } else if c == '\u{1b}' {
+            in_esc = true;
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn print_init_status(store: &Store) {
     if store.is_initialized() {
-        println!("  {} repo             initialized (.git/agentdiff/ exists)", "ok".green());
+        println!(
+            "  {} repo             initialized (.git/agentdiff/ exists)",
+            prefix(ok())
+        );
     } else {
         println!(
             "  {} repo             not initialized — run {} to start tracking",
-            "!".yellow(),
+            prefix(warn()),
             "agentdiff init".cyan()
         );
     }
@@ -34,7 +69,7 @@ fn print_keys_status() {
     let priv_path = match keys::private_key_path() {
         Ok(p) => p,
         Err(_) => {
-            println!("  {} signing keys  cannot resolve home dir", "?".yellow());
+            println!("  {} signing keys  cannot resolve home dir", prefix(warn()));
             return;
         }
     };
@@ -73,19 +108,20 @@ fn print_keys_status() {
         };
         println!(
             "  {} signing keys  key_id={} ({})",
-            "ok".green(),
+            prefix(ok()),
             key_id,
             perm_color
         );
     } else if !priv_ok && !pub_ok {
         println!(
-            "  {} signing keys  not initialized — run 'agentdiff keys init'",
-            "!".yellow()
+            "  {} signing keys  not initialized — run '{}'",
+            prefix(warn()),
+            "agentdiff keys init".cyan()
         );
     } else {
         println!(
             "  {} signing keys  partial — private={} public={}",
-            "!".yellow(),
+            prefix(warn()),
             if priv_ok { "ok" } else { "missing" },
             if pub_ok { "ok" } else { "missing" }
         );
@@ -97,8 +133,8 @@ fn print_traces_status(store: &Store) -> Result<()> {
 
     if traces.is_empty() {
         println!(
-            "  {} traces         none on agentdiff-meta",
-            "--".dimmed()
+            "  {} traces         none in refs/agentdiff/meta",
+            prefix(dim())
         );
         return Ok(());
     }
@@ -111,7 +147,7 @@ fn print_traces_status(store: &Store) -> Result<()> {
 
     println!(
         "  {} traces         {} entries ({}/{} signed), last: {} ({})",
-        "ok".green(),
+        prefix(ok()),
         total,
         signed,
         total,
@@ -144,15 +180,16 @@ fn print_hook_status(store: &Store) {
     if pre_ok && post_ok && pre_push_ok {
         println!(
             "  {} git hooks      pre-commit + post-commit + pre-push installed",
-            "ok".green()
+            prefix(ok())
         );
     } else {
         println!(
-            "  {} git hooks      pre-commit={} post-commit={} pre-push={} — run 'agentdiff init'",
-            "!".yellow(),
+            "  {} git hooks      pre-commit={} post-commit={} pre-push={} — run '{}'",
+            prefix(warn()),
             if pre_ok { "ok" } else { "missing" },
             if post_ok { "ok" } else { "missing" },
-            if pre_push_ok { "ok" } else { "missing" }
+            if pre_push_ok { "ok" } else { "missing" },
+            "agentdiff init".cyan()
         );
     }
 }
@@ -212,11 +249,11 @@ fn print_agent_hook_status() {
             .map(|s| s.contains(check.marker))
             .unwrap_or(false);
         if registered {
-            println!("  {} agent hook     {} registered", "ok".green(), check.name);
+            println!("  {} agent hook     {} registered", prefix(ok()), check.name);
         } else {
             println!(
                 "  {} agent hook     {} config found but agentdiff hook missing — re-run 'agentdiff configure'",
-                "!".yellow(),
+                prefix(warn()),
                 check.name
             );
             any_missing = true;
@@ -236,28 +273,28 @@ fn print_agent_hook_status() {
                 .unwrap_or(false);
             match (cli_ok, rule_ok) {
                 (true, true) => {
-                    println!("  {} agent hook     gemini-cli registered; antigravity rule set", "ok".green());
+                    println!("  {} agent hook     gemini-cli registered; antigravity rule set", prefix(ok()));
                 }
                 (true, false) => {
-                    println!("  {} agent hook     gemini-cli registered", "ok".green());
+                    println!("  {} agent hook     gemini-cli registered", prefix(ok()));
                     println!(
                         "  {} agent hook     antigravity GEMINI.md rule missing — re-run 'agentdiff configure'",
-                        "!".yellow()
+                        prefix(warn())
                     );
                     any_missing = true;
                 }
                 (false, true) => {
                     println!(
                         "  {} agent hook     gemini-cli hooks missing — re-run 'agentdiff configure'",
-                        "!".yellow()
+                        prefix(warn())
                     );
-                    println!("  {} agent hook     antigravity rule set", "ok".green());
+                    println!("  {} agent hook     antigravity rule set", prefix(ok()));
                     any_missing = true;
                 }
                 (false, false) => {
                     println!(
                         "  {} agent hook     gemini/antigravity config found but hooks missing — re-run 'agentdiff configure'",
-                        "!".yellow()
+                        prefix(warn())
                     );
                     any_missing = true;
                 }
@@ -273,11 +310,11 @@ fn print_agent_hook_status() {
                 .map(|s| s.contains("agentdiff"))
                 .unwrap_or(false);
             if registered {
-                println!("  {} agent hook     opencode registered", "ok".green());
+                println!("  {} agent hook     opencode registered", prefix(ok()));
             } else {
                 println!(
                     "  {} agent hook     opencode plugin found but agentdiff missing — re-run 'agentdiff configure'",
-                    "!".yellow()
+                    prefix(warn())
                 );
                 any_missing = true;
             }
@@ -304,11 +341,11 @@ fn print_agent_hook_status() {
     }
     if copilot_checked {
         if copilot_found {
-            println!("  {} agent hook     copilot registered", "ok".green());
+            println!("  {} agent hook     copilot registered", prefix(ok()));
         } else {
             println!(
                 "  {} agent hook     copilot extension not found — re-run 'agentdiff configure'",
-                "!".yellow()
+                prefix(warn())
             );
             any_missing = true;
         }
@@ -317,7 +354,7 @@ fn print_agent_hook_status() {
     if !any_checked {
         println!(
             "  {} agent hooks    no AI agent configs found — run 'agentdiff configure'",
-            "--".dimmed()
+            prefix(dim())
         );
     } else if any_missing {
         println!(
@@ -342,11 +379,160 @@ fn print_unpushed_status(store: &Store) {
         let count = raw.lines().filter(|l| !l.trim().is_empty()).count();
         if count > 0 {
             println!(
-                "  {} unpushed       {} trace(s) for branch '{}' — run 'agentdiff push'",
-                "!".yellow(),
+                "  {} unpushed       {} trace(s) for branch '{}' — run '{}'",
+                prefix(warn()),
                 count,
-                branch
+                branch,
+                "agentdiff push".cyan()
             );
+        }
+    }
+}
+
+// ── Remote status (--remote) ────────────────────────────────────────────────
+
+fn run_remote(store: &Store, args: &StatusArgs) -> Result<()> {
+    let ls_out = Command::new("git")
+        .args(["ls-remote", "origin", "refs/agentdiff/*"])
+        .current_dir(&store.repo_root)
+        .output();
+
+    let remote_refs: Vec<(String, String)> = match ls_out {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, '\t');
+                let sha = parts.next()?.trim().to_string();
+                let refname = parts.next()?.trim().to_string();
+                Some((sha, refname))
+            })
+            .collect(),
+        Ok(_) => Vec::new(),
+        Err(e) => anyhow::bail!("git ls-remote failed: {e}"),
+    };
+
+    let remote_label = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&store.repo_root)
+        .output()
+        .ok()
+        .and_then(|o| {
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
+        .unwrap_or_else(|| "origin".to_string());
+
+    print_command_header("status --remote");
+    println!("  {}", remote_label.dimmed());
+    println!();
+
+    if remote_refs.is_empty() {
+        println!("  {} no agentdiff refs found on remote", dim());
+        println!();
+        println!("  Push local traces with: {}", "agentdiff push".cyan());
+        println!();
+        return Ok(());
+    }
+
+    let hdr = format!("  {:<45} {:<10} {}", "REF", "TRACES", "LOCAL");
+    println!("{}", hdr.dimmed());
+    println!("  {}", "─".repeat(72).dimmed());
+
+    for (sha, refname) in &remote_refs {
+        let short_sha = if sha.len() >= 8 { &sha[..8] } else { sha };
+
+        let trace_count = if !args.no_fetch {
+            fetch_trace_count(&store.repo_root, refname)
+        } else {
+            None
+        };
+
+        let count_str = match trace_count {
+            Some(n) => format!("{n}"),
+            None => short_sha.to_string(),
+        };
+
+        let local_str = local_ref_status(store, refname);
+
+        println!(
+            "  {:<45} {:<10} {}",
+            refname.cyan(),
+            count_str,
+            local_str.dimmed()
+        );
+    }
+
+    if let Ok(branch) = store.current_branch() {
+        let local_path = store.local_traces_path(&branch);
+        if local_path.exists() {
+            let local_traces = store.load_local_traces(&branch).unwrap_or_default();
+            let branch_ref = store::branch_ref_name(&branch);
+            let on_remote = remote_refs.iter().any(|(_, r)| r == &branch_ref);
+            if !on_remote && !local_traces.is_empty() {
+                println!();
+                println!(
+                    "  {} {} local trace(s) for '{}' not yet pushed — run: {}",
+                    warn(),
+                    local_traces.len(),
+                    branch,
+                    "agentdiff push".cyan()
+                );
+            }
+        }
+    }
+
+    println!();
+    Ok(())
+}
+
+fn fetch_trace_count(repo_root: &std::path::Path, ref_name: &str) -> Option<usize> {
+    if let Some(n) = count_local_ref(repo_root, ref_name) {
+        return Some(n);
+    }
+    store::fetch_ref_content_via_api(repo_root, ref_name, "traces.jsonl")
+        .ok()
+        .flatten()
+        .map(|content| content.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
+fn count_local_ref(repo_root: &std::path::Path, ref_name: &str) -> Option<usize> {
+    let spec = format!("{ref_name}:traces.jsonl");
+    let out = Command::new("git")
+        .args(["show", &spec])
+        .current_dir(repo_root)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let content = String::from_utf8_lossy(&out.stdout);
+    Some(content.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
+fn local_ref_status(store: &Store, ref_name: &str) -> String {
+    let local_sha = Command::new("git")
+        .args(["rev-parse", ref_name])
+        .current_dir(&store.repo_root)
+        .output()
+        .ok()
+        .and_then(|o| {
+            o.status
+                .success()
+                .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        });
+
+    match local_sha {
+        Some(_) => "synced".to_string(),
+        None => {
+            if ref_name.starts_with("refs/agentdiff/traces/") {
+                let branch_part = ref_name.trim_start_matches("refs/agentdiff/traces/");
+                let local_path = store.local_traces_path(branch_part);
+                if local_path.exists() {
+                    return "local buffer only (run: agentdiff push)".to_string();
+                }
+            }
+            "not fetched locally".to_string()
         }
     }
 }

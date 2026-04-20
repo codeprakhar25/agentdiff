@@ -131,21 +131,56 @@ def collect_changed_lines(repo_root: str) -> Dict[str, List[int]]:
             result.setdefault(path, [])
             result[path].extend(lines)
 
+    # git diff does not show brand-new untracked files. Detect them separately
+    # so Codex attribution works when it creates a file from scratch.
+    try:
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=repo_root,
+        )
+        if untracked.returncode == 0:
+            for rel_path in untracked.stdout.splitlines():
+                rel_path = rel_path.strip()
+                if not rel_path or rel_path in result:
+                    continue
+                abs_path = os.path.join(repo_root, rel_path)
+                try:
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as fh:
+                        line_count = sum(1 for _ in fh)
+                    if line_count > 0:
+                        result[rel_path] = list(range(1, line_count + 1))
+                    else:
+                        result[rel_path] = [1]
+                except (OSError, IOError):
+                    result[rel_path] = [1]
+    except Exception:
+        pass
+
     return {k: sorted(set(v)) for k, v in result.items() if v}
 
 
 def get_dirty_file_names(repo_root: str) -> List[str]:
-    """Return repo-relative paths of all files currently differing from HEAD."""
+    """Return repo-relative paths of all files currently differing from HEAD, including untracked."""
+    files: List[str] = []
     try:
         out = subprocess.run(
             ["git", "diff", "HEAD", "--name-only"],
             capture_output=True, text=True, cwd=repo_root,
         )
-        if out.returncode != 0:
-            return []
-        return [line.strip() for line in out.stdout.splitlines() if line.strip()]
+        if out.returncode == 0:
+            files.extend(line.strip() for line in out.stdout.splitlines() if line.strip())
     except Exception:
-        return []
+        pass
+    try:
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
+            capture_output=True, text=True, cwd=repo_root,
+        )
+        if untracked.returncode == 0:
+            files.extend(line.strip() for line in untracked.stdout.splitlines() if line.strip())
+    except Exception:
+        pass
+    return list(dict.fromkeys(files))  # deduplicate, preserve order
 
 
 def pre_task_state_path(repo_root: str) -> str:

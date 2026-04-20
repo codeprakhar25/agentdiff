@@ -86,47 +86,46 @@ def get_session_log(cwd: str):
 
 
 def get_model_and_prompt(cwd: str, session_id: str) -> tuple:
-    """Read model and prompt from Claude session JSONL."""
+    """Read model and prompt from Claude Code session JSONL.
+
+    Claude Code stores session files at:
+      ~/.claude/projects/{repo-slug}/{session_id}.jsonl
+    where the repo slug is the repo path with slashes replaced by dashes.
+    We glob-search all project dirs to avoid reconstructing the slug.
+    """
+    import glob as _glob
     try:
-        # Try to find the session file
         home = os.path.expanduser("~")
-        parts = session_id.split("-")
-        # Construct likely path
-        possible_paths = [
-            os.path.join(home, ".claude", "projects", parts[-1] if parts else "", f"{session_id}.jsonl"),
-            os.path.join(home, ".claude", "projects", session_id[:8], f"{session_id}.jsonl"),
-        ]
+        pattern = os.path.join(home, ".claude", "projects", "**", f"{session_id}.jsonl")
+        matches = _glob.glob(pattern, recursive=True)
+        if not matches:
+            return "unknown", "unknown"
 
-        for session_path in possible_paths:
-            if os.path.exists(session_path):
-                with open(session_path) as f:
-                    lines = f.readlines()
+        session_path = matches[0]
+        with open(session_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
 
-                # Find last assistant message for model
-                model = "unknown"
-                for line in reversed(lines):
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("type") == "assistant" and entry.get("message", {}).get("model"):
-                            model = entry["message"]["model"]
-                            break
-                    except:
-                        continue
+        model = "unknown"
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+                if entry.get("type") == "assistant" and entry.get("message", {}).get("model"):
+                    model = entry["message"]["model"]
+                    break
+            except Exception:
+                continue
 
-                # Find last-prompt for the actual user request
-                prompt = "unknown"
-                for line in reversed(lines):
-                    try:
-                        entry = json.loads(line)
-                        if entry.get("type") == "last-prompt":
-                            prompt = entry.get("lastPrompt", "unknown")
-                            break
-                    except:
-                        continue
+        prompt = "unknown"
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+                if entry.get("type") == "last-prompt":
+                    prompt = entry.get("lastPrompt", "unknown")
+                    break
+            except Exception:
+                continue
 
-                return model, prompt
-
-        return "unknown", "unknown"
+        return model, prompt
     except Exception:
         return "unknown", "unknown"
 

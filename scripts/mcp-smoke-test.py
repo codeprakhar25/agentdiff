@@ -176,19 +176,28 @@ def main() -> int:
         run(["git", "add", "mcp-smoke.txt"], cwd=repo)
         run(["git", "commit", "-m", "test: mcp smoke"], cwd=repo)
 
-        # finalize-ledger.py writes to refs/heads/agentdiff-meta:ledger.jsonl via git
-        # plumbing (not to disk) when git is available. Read from there.
-        ledger_result = run(["git", "show", "agentdiff-meta:ledger.jsonl"], cwd=repo)
-        rows = [json.loads(x) for x in ledger_result.stdout.splitlines() if x.strip()]
+        # finalize-ledger.py writes AgentTrace records to .git/agentdiff/traces/{branch}.jsonl.
+        branch_res = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo)
+        branch = branch_res.stdout.strip().replace("/", "%2F")
+        traces_path = repo / ".git" / "agentdiff" / "traces" / f"{branch}.jsonl"
+        if not traces_path.exists():
+            raise RuntimeError(f"traces file not found: {traces_path}")
+        rows = [json.loads(x) for x in traces_path.read_text(encoding="utf-8").splitlines() if x.strip()]
         if not rows:
-            raise RuntimeError("ledger.jsonl is empty after commit")
+            raise RuntimeError("traces file is empty after commit")
         entry = rows[-1]
-        if entry.get("agent") != "codex":
-            raise RuntimeError(f"expected agent=codex in ledger entry, got {entry}")
-        if entry.get("model") != "mcp-smoke-model":
-            raise RuntimeError(f"expected model=mcp-smoke-model, got {entry}")
-        if entry.get("session_id") != "mcp-smoke-1":
-            raise RuntimeError(f"expected session_id=mcp-smoke-1, got {entry}")
+        tool_name = (entry.get("tool") or {}).get("name")
+        if tool_name != "codex":
+            raise RuntimeError(f"expected tool.name=codex in trace entry, got {entry}")
+        files = entry.get("files") or []
+        if not files:
+            raise RuntimeError(f"expected files in trace entry, got {entry}")
+        model_id = ((files[0].get("conversations") or [{}])[0].get("contributor") or {}).get("model_id")
+        if model_id != "mcp-smoke-model":
+            raise RuntimeError(f"expected model_id=mcp-smoke-model in trace entry, got {entry}")
+        session_id = ((entry.get("metadata") or {}).get("agentdiff") or {}).get("session_id")
+        if session_id != "mcp-smoke-1":
+            raise RuntimeError(f"expected session_id=mcp-smoke-1 in trace entry, got {entry}")
 
     print("mcp smoke test: ok")
     return 0

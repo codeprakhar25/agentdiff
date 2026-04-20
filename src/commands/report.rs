@@ -37,6 +37,12 @@ pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
         entries.retain(|e| e.model.contains(model.as_str()));
     }
 
+    // --post-pr-comment: generate markdown and post via gh CLI regardless of --format.
+    if let Some(ref pr_arg) = args.post_pr_comment {
+        let md = markdown_report(&entries)?;
+        return post_pr_comment(&store.repo_root, &md, *pr_arg);
+    }
+
     match args.format {
         ReportFormat::Text => run_text(store, &entries, args),
         ReportFormat::Markdown => {
@@ -49,6 +55,29 @@ pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
         }
         ReportFormat::Jsonl => unreachable!(),
     }
+}
+
+fn post_pr_comment(repo_root: &Path, body: &str, pr_number: Option<u64>) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let mut cmd = Command::new("gh");
+    cmd.arg("pr").arg("comment");
+
+    if let Some(n) = pr_number {
+        cmd.arg(n.to_string());
+    }
+
+    cmd.args(["--body", body])
+        .current_dir(repo_root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let status = cmd.status().context("running gh pr comment")?;
+    if !status.success() {
+        anyhow::bail!("gh pr comment failed (exit {})", status);
+    }
+    Ok(())
 }
 
 // ── Text (replaces `stats`) ──────────────────────────────────────────────────

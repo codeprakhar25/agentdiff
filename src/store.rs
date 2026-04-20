@@ -479,7 +479,9 @@ pub fn push_content_to_ref(
 
     // CAS retry loop: fetch parent → build tree+commit → update ref (no force).
     // On non-fast-forward (422), re-fetch parent and retry with exponential backoff.
-    const MAX_RETRIES: u32 = 5;
+    // 10 retries covers ~100 concurrent pushes at sprint-end merge bursts.
+    // Backoff: 200ms, 400ms, 800ms, 1.6s, 3.2s … capped at 5s per attempt.
+    const MAX_RETRIES: u32 = 10;
     for attempt in 0..MAX_RETRIES {
         let parent_sha = fetch_ref_sha(&owner, &repo, api_ref, repo_root);
 
@@ -529,8 +531,8 @@ pub fn push_content_to_ref(
                 let is_conflict = msg.contains("422") || msg.contains("not a fast forward")
                     || msg.contains("non-fast-forward");
                 if is_conflict && attempt < MAX_RETRIES - 1 {
-                    // Exponential backoff: 100ms, 200ms, 400ms, 800ms
-                    let delay_ms = 100u64 * (1 << attempt);
+                    // Exponential backoff capped at 5s: 200ms, 400ms, 800ms … 5000ms
+                    let delay_ms = (200u64 * (1 << attempt)).min(5_000);
                     std::thread::sleep(std::time::Duration::from_millis(delay_ms));
                     continue;
                 }

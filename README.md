@@ -79,7 +79,7 @@ agentdiff stats
 
 That's it. From here every commit is attributed to whichever agent (or human) wrote it.
 
-> **Note:** `agentdiff configure` installs capture hooks globally — all repos you work on with AI agents will be tracked. To track only specific repos, you can skip the global configure and run `agentdiff init` per-repo only (you will need to configure hooks manually).
+> **Note:** `agentdiff configure` installs capture scripts globally, but capture only fires in repos where `agentdiff init` has been run (the `.git/agentdiff/` directory must exist). Running `configure` on its own does not track any repo — you must also run `agentdiff init` inside each repo you want to track.
 
 ---
 
@@ -87,16 +87,16 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 
 | Command | Description |
 |---------|-------------|
-| `agentdiff configure` | Install global agent hooks — run once per machine |
-| `agentdiff init` | Initialize tracking in current repository |
+| `agentdiff configure` | Install global agent capture hooks — run once per machine |
+| `agentdiff init` | Initialize tracking in current repository (required per repo) |
+| `agentdiff install-ci` | Write CI workflow YAMLs to `.github/workflows/` — run once per repo |
 | `agentdiff list` | List attribution entries |
 | `agentdiff blame <file>` | Line-level attribution, like `git blame` |
-| `agentdiff stats` | Aggregate stats by agent, model, file |
-| `agentdiff log` | Chronological AI contribution history |
 | `agentdiff diff [<sha>]` | Attribution diff for a commit or range |
 | `agentdiff show <sha>` | Full details for one trace entry |
-| `agentdiff report` | CI report in Markdown or GitHub annotations |
+| `agentdiff report` | Aggregate report (text, markdown, annotations, JSONL) |
 | `agentdiff status` | Health check — hooks, keys, traces |
+| `agentdiff status --remote` | Show remote trace ref state (`refs/agentdiff/*` on origin) |
 | `agentdiff push` | Push local traces to per-branch ref on origin |
 | `agentdiff consolidate` | Merge per-branch traces into permanent store (CI) |
 | `agentdiff verify` | Verify ed25519 signatures on trace entries |
@@ -104,9 +104,6 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 | `agentdiff keys register` | Register your public key in the git key registry |
 | `agentdiff keys rotate` | Rotate your keypair and register the new key |
 | `agentdiff policy check` | Enforce AI attribution policy rules |
-| `agentdiff export` | Export traces in Agent Trace JSONL format |
-| `agentdiff remote-status` | Show remote trace ref state (`refs/agentdiff/*` on origin) |
-| `agentdiff migrate` | Import legacy ledger.jsonl into new storage |
 | `agentdiff config` | Manage global configuration |
 
 <details>
@@ -120,15 +117,19 @@ agentdiff list --limit 50
 # Blame for a specific agent only
 agentdiff blame src/api.rs --agent claude-code
 
-# Stats broken down by file and model
-agentdiff stats --by-file --by-model
+# Report broken down by file and model
+agentdiff report --by-file --by-model
 
-# Stats from a specific date
-agentdiff stats --since 2026-01-01T00:00:00Z
+# Report from a specific date
+agentdiff report --since 2026-01-01T00:00:00Z
 
-# CI report to file
-agentdiff report --format markdown --out-md report.md
-agentdiff report --format annotations --out-annotations annotations.json
+# Report to file
+agentdiff report --format markdown --out report.md
+agentdiff report --format annotations --out annotations.json
+
+# Post report as a PR comment (auto-detects PR from current branch)
+agentdiff report --format markdown --post-pr-comment
+agentdiff report --format markdown --post-pr-comment 42   # explicit PR number
 
 # Attribution diff for last 3 commits
 agentdiff diff HEAD~3
@@ -147,6 +148,9 @@ agentdiff push
 # Consolidate a branch's traces into permanent store (CI step)
 agentdiff consolidate --branch feature/my-branch --push
 
+# Write CI workflows to .github/workflows/ (run once per repo)
+agentdiff install-ci
+
 # Skip specific agents during configure
 agentdiff configure --no-copilot --no-antigravity
 
@@ -154,8 +158,8 @@ agentdiff configure --no-copilot --no-antigravity
 agentdiff init --no-git-hook
 
 # Check remote trace ref state after pushing
-agentdiff remote-status
-agentdiff remote-status --no-fetch   # fast: show refs + SHAs only, skip trace counts
+agentdiff status --remote
+agentdiff status --remote --no-fetch   # fast: show refs + SHAs only, skip trace counts
 ```
 
 </details>
@@ -174,7 +178,7 @@ agentdiff remote-status --no-fetch   # fast: show refs + SHAs only, skip trace c
 | **Codex CLI** | `notify` hook (`~/.codex/config.toml`) | Task-level file changes |
 | **Gemini / Antigravity** | `BeforeTool`/`AfterTool` hooks (`~/.gemini/settings.json`) | `write_file`, `replace` |
 
-Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all installed **globally once** via `agentdiff configure` — no per-repo setup needed for those.
+Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all installed **globally once** via `agentdiff configure`. However, capture only fires in repos where `agentdiff init` has been run — the `.git/agentdiff/` directory must exist for any data to be written.
 
 ---
 
@@ -456,11 +460,27 @@ Exits 0 on pass, 1 on violation. Use `--since <sha>` to scope to a specific rang
 
 ## CI Integration
 
-**Full pipeline** — report, verify, and enforce policy on every PR:
+Run once to write both workflow files into your repo:
+
+```bash
+agentdiff install-ci
+git add .github/workflows/agentdiff-*.yml
+git commit -m "ci: add agentdiff consolidation and policy workflows"
+```
+
+This writes two workflows:
+
+- **`agentdiff-consolidate.yml`** — triggers on PR merge: consolidates per-branch traces into the permanent store and posts an attribution comment to the PR.
+- **`agentdiff-policy.yml`** — triggers on every PR: runs `agentdiff policy check` and posts GitHub check annotations if rules are violated.
+
+For repos that need a custom pipeline, the manual equivalent:
 
 ```yaml
-# .github/workflows/agentdiff.yml
+# .github/workflows/agentdiff-policy.yml
 on: [pull_request]
+permissions:
+  contents: read
+  checks: write
 
 jobs:
   agentdiff:
@@ -472,31 +492,17 @@ jobs:
 
       - name: Install agentdiff
         run: |
-          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Init repo
-        run: agentdiff init --no-git-hook
-
       - name: Fetch agentdiff refs
-        run: git fetch origin 'refs/agentdiff/*:refs/agentdiff/*'
-
-      - name: Consolidate traces
-        run: agentdiff consolidate --branch ${{ github.head_ref }} --push
+        run: git fetch origin '+refs/agentdiff/*:refs/agentdiff/*' || true
 
       - name: Verify signatures
         run: agentdiff verify
 
       - name: Policy check
         run: agentdiff policy check --format github-annotations
-
-      - name: Generate report
-        run: agentdiff report --format markdown --out-md ai-report.md
-
-      - name: Post as PR comment
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          path: ai-report.md
 ```
 
 ---
@@ -508,8 +514,7 @@ Config lives at `~/.agentdiff/config.toml`:
 ```toml
 schema_version = "1.0"
 scripts_dir = "~/.agentdiff/scripts"
-auto_amend_ledger = true        # include ledger in same commit automatically
-data_dir = "~/.agentdiff/spillover"
+capture_prompts = true   # set false to omit prompt excerpts from traces
 
 [[repos]]
 path = "/home/user/my-project"
@@ -517,8 +522,8 @@ slug = "-home-user-my-project"
 ```
 
 ```bash
-# Disable auto-amend
-agentdiff config set auto_amend_ledger false
+# Disable prompt capture
+agentdiff config set capture_prompts false
 
 # View current config
 agentdiff config show

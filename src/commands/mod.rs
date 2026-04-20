@@ -1,6 +1,7 @@
 pub mod blame;
 pub mod config_cmd;
 pub mod consolidate;
+pub mod install_ci;
 pub mod diff;
 pub mod keys;
 pub mod list;

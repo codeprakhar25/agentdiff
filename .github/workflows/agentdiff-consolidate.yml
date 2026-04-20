@@ -1,0 +1,41 @@
+name: Consolidate Agent Traces
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  consolidate:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch agentdiff refs
+        run: |
+          git fetch origin '+refs/agentdiff/*:refs/agentdiff/*' || true
+
+      - name: Install agentdiff
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Consolidate traces
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          agentdiff consolidate --branch "$BRANCH" --push
+
+      - name: Post attribution comment
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          PR="${{ github.event.pull_request.number }}"
+          agentdiff report --format markdown --post-pr-comment "$PR" || true

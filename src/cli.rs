@@ -60,6 +60,9 @@ pub enum Command {
     /// Consolidate per-branch ref traces into agentdiff-meta (used by CI)
     Consolidate(ConsolidateArgs),
 
+    /// Write agentdiff CI workflow files to .github/workflows/
+    InstallCi(InstallCiArgs),
+
     /// [internal] Sign the last trace entry — called by the post-commit hook
     #[command(hide = true)]
     SignEntry,
@@ -164,6 +167,11 @@ pub struct ReportArgs {
     /// Write output to a file instead of stdout
     #[arg(long)]
     pub out: Option<std::path::PathBuf>,
+
+    /// Post the markdown report as a PR comment (requires gh CLI and GH_TOKEN).
+    /// Provide PR number, or omit to auto-detect from the current branch.
+    #[arg(long, value_name = "PR_NUMBER")]
+    pub post_pr_comment: Option<Option<u64>>,
 
     /// Only include entries after this ISO timestamp
     #[arg(long)]
@@ -312,5 +320,14 @@ pub struct PolicyCheckArgs {
 pub enum PolicyFormat {
     Text,
     GithubAnnotations,
+}
+
+// ── InstallCi ────────────────────────────────────────────────────────────────
+
+#[derive(Args, Debug)]
+pub struct InstallCiArgs {
+    /// Overwrite existing workflow files without prompting
+    #[arg(long)]
+    pub force: bool,
 }
 

@@ -136,29 +136,34 @@ fn print_configure_summary(
         None => return,
     };
 
-    // Each tuple: (display name, skipped flag, config path joined from home, marker string)
-    let home_based: &[(&str, bool, &[&str], &str)] = &[
+    // Each tuple: (display name, skipped flag, presence-check path parts, config file path parts, marker string)
+    // presence_parts: path that must exist for the tool to be considered installed (dir or file)
+    // config_parts: path that contains the hooks (checked for marker string)
+    let home_based: &[(&str, bool, &[&str], &[&str], &str)] = &[
         (
             "claude-code",
             no_claude,
+            &[".claude"],
             &[".claude", "settings.json"],
             "capture-claude",
         ),
         (
             "cursor",
             no_cursor,
+            &[".cursor"],
             &[".cursor", "hooks.json"],
             "capture-cursor",
         ),
         (
             "windsurf",
             no_windsurf,
+            &[".codeium", "windsurf"],
             &[".codeium", "windsurf", "hooks.json"],
             "capture-windsurf",
         ),
     ];
 
-    for (name, skipped, path_parts, marker) in home_based {
+    for (name, skipped, presence_parts, config_parts, marker) in home_based {
         if *skipped {
             println!(
                 "  {} {}  skipped (--no-{})",
@@ -168,9 +173,18 @@ fn print_configure_summary(
             );
             continue;
         }
-        let config_path = path_parts.iter().fold(home.clone(), |p, part| p.join(part));
-        if !config_path.exists() {
+        let presence_path = presence_parts.iter().fold(home.clone(), |p, part| p.join(part));
+        if !presence_path.exists() {
             println!("  {} {}  not installed on this machine", dim(), name);
+            continue;
+        }
+        let config_path = config_parts.iter().fold(home.clone(), |p, part| p.join(part));
+        if !config_path.exists() {
+            println!(
+                "  {} {}  hook missing — re-run 'agentdiff configure'",
+                warn(),
+                name
+            );
             continue;
         }
         let registered = std::fs::read_to_string(&config_path)

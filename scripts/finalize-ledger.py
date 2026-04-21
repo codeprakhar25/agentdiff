@@ -106,6 +106,7 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> Optio
 
     # Build per-file trace entries from pending payload.
     agent = str(pending.get("agent") or "human")
+    git_author = str(pending.get("git_author") or agent)
     model = str(pending.get("model") or "human")
     attribution = pending.get("attribution") or {}
     lines_map = pending.get("lines") or {}
@@ -161,7 +162,7 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> Optio
         "id": str(uuid_mod.uuid4()),
         "timestamp": ts,
         "vcs": {"type": "git", "revision": sha},
-        "tool": {"name": agent},
+        "tool": {"name": git_author if agent == "human" else agent},
         "files": files,
     }
     _ = model  # captured above into per-file contributor.model_id

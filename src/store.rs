@@ -109,6 +109,14 @@ impl Store {
         Ok(values)
     }
 
+    /// Load uncommitted session entries (not yet finalized into AgentTrace records).
+    pub fn load_uncommitted_entries(&self) -> Result<Vec<Entry>> {
+        let mut entries = Vec::new();
+        let session_path = Config::repo_session_log(&self.repo_root);
+        load_session_from(&session_path, &mut entries, false)?;
+        Ok(entries)
+    }
+
     /// Load all traces and convert to Entry for display commands.
     pub fn load_entries(&self) -> Result<Vec<Entry>> {
         let traces = self.load_all_traces()?;
@@ -116,10 +124,6 @@ impl Store {
             .iter()
             .flat_map(|t| t.to_entries(&self.repo_root))
             .collect();
-
-        // Also load uncommitted session entries
-        let session_path = Config::repo_session_log(&self.repo_root);
-        load_session_from(&session_path, &mut entries, false)?;
 
         entries.sort_by(|a, b| {
             a.timestamp

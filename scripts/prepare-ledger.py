@@ -289,8 +289,7 @@ def main() -> int:
     prompt = str(pending.get("prompt") or event.get("prompt") or "")
     session_id = str(pending.get("session_id") or event.get("session_id") or "unknown")
     agent = str(pending.get("agent") or event.get("agent") or "human")
-    if agent == "human":
-        agent = get_git_username(repo_root)
+    git_author = get_git_username(repo_root)
     model = str(pending.get("model_id") or pending.get("model") or event.get("model") or "human")
     files_read = pending.get("files_read")
     if not isinstance(files_read, list):
@@ -313,13 +312,14 @@ def main() -> int:
         intent = str(intent)
 
     # Per-file attribution — each file maps to the agent/model that wrote it.
-    # Only populated when multiple agents are detected; omitted for single-agent commits.
+    # Files with a session event that matches the dominant agent are omitted (finalize
+    # falls back to the top-level agent). Files with NO session evidence at all are
+    # explicitly marked "human" so they are never incorrectly claimed by the dominant agent.
     attribution: Dict[str, dict] = {}
     for fp, ev in events_by_file.items():
         file_agent = str(ev.get("agent") or "human")
         file_model = str(ev.get("model") or "human")
         if file_agent != agent or file_model != model:
-            # Only store when it differs from the dominant agent (saves space for single-agent commits)
             attribution[fp] = {
                 "agent": file_agent,
                 "model": file_model,
@@ -327,9 +327,17 @@ def main() -> int:
                 "tool": str(ev.get("tool") or "commit"),
             }
 
+    # Files committed with no captured session event → attribute to human.
+    # Without this, finalize-ledger.py would inherit the dominant AI agent for these
+    # files even though we have no evidence the AI touched them.
+    for fp in files_touched:
+        if fp not in events_by_file:
+            attribution[fp] = {"agent": "human", "model": "human"}
+
     payload = {
         "captured_at": datetime.now(timezone.utc).isoformat(),
         "agent": agent,
+        "git_author": git_author,
         "model": model,
         "session_id": session_id,
         "files_touched": files_touched,

@@ -92,8 +92,7 @@ pub fn run(store: &Store, args: &ListArgs) -> Result<()> {
 }
 
 fn run_uncommitted(store: &Store, args: &ListArgs) -> Result<()> {
-    let mut entries = store.load_entries()?;
-    entries.retain(|e| !e.committed);
+    let mut entries = store.load_uncommitted_entries()?;
 
     if let Some(ref agent) = args.agent {
         entries.retain(|e| e.agent.contains(agent.as_str()));

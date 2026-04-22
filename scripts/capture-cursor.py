@@ -14,15 +14,26 @@ def debug_enabled() -> bool:
     return os.environ.get("AGENTDIFF_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 
 
+def _write_log(path: str, message: str) -> None:
+    try:
+        log_dir = os.path.expanduser("~/.agentdiff/logs")
+        os.makedirs(log_dir, exist_ok=True)
+        ts = datetime.now(timezone.utc).isoformat()
+        with open(os.path.join(log_dir, path), "a", encoding="utf-8") as f:
+            f.write(f"{ts} {message}\n")
+    except Exception:
+        pass
+
+
+def always_log(message: str) -> None:
+    """Write to cursor.log unconditionally — key events, no secrets."""
+    _write_log("capture-cursor.log", message)
+
+
 def debug_log(message: str) -> None:
     if not debug_enabled():
         return
-    log_dir = os.path.expanduser("~/.agentdiff/logs")
-    os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, "capture-cursor.log")
-    ts = datetime.now(timezone.utc).isoformat()
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f"{ts} {message}\n")
+    _write_log("capture-cursor-debug.log", message)
 
 
 def first(payload: dict, *keys, default=None):
@@ -107,9 +118,65 @@ def get_cached_prompt(conversation_id: str) -> str:
     """Read cached prompt from beforeSubmitPrompt."""
     prompt_path = os.path.expanduser(f"~/.cursor/hooks/prompts/{conversation_id}.txt")
     if os.path.exists(prompt_path):
-        with open(prompt_path) as f:
-            return f.read().strip()
-    return "unknown"
+        try:
+            with open(prompt_path) as f:
+                return f.read().strip()
+        except Exception:
+            pass
+    return ""
+
+
+def _cursor_project_slug(repo_root: str) -> str:
+    """Derive the ~/.cursor/projects/ slug from a repo root path.
+
+    /home/prakh/ml-resarch  →  home-prakh-ml-resarch
+    """
+    return repo_root.lstrip("/").replace("/", "-")
+
+
+def get_prompt_from_transcript(conversation_id: str, repo_root: str) -> str:
+    """Read the user's prompt from Cursor's agent-transcript JSONL.
+
+    Files live at:
+      ~/.cursor/projects/{slug}/agent-transcripts/{conv_id}/{conv_id}.jsonl
+
+    We read the first user message and extract its text content.
+    """
+    slug = _cursor_project_slug(repo_root)
+    transcript_path = os.path.expanduser(
+        f"~/.cursor/projects/{slug}/agent-transcripts/{conversation_id}/{conversation_id}.jsonl"
+    )
+    if not os.path.exists(transcript_path):
+        debug_log(f"transcript not found: {transcript_path}")
+        return ""
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    entry = json.loads(raw)
+                except Exception:
+                    continue
+                if entry.get("role") != "user":
+                    continue
+                content = entry.get("message", {}).get("content", [])
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            # Strip the <user_query>…</user_query> wrapper Cursor adds.
+                            text = re.sub(r"<user_query>\s*", "", text)
+                            text = re.sub(r"\s*</user_query>", "", text)
+                            return text.strip()[:500]
+                elif isinstance(content, str):
+                    return content.strip()[:500]
+    except Exception as exc:
+        debug_log(f"transcript read error: {exc}")
+    return ""
+
+
 
 
 def main():
@@ -121,11 +188,12 @@ def main():
     try:
         payload = json.loads(input_data)
     except json.JSONDecodeError:
+        always_log(f"SKIP parse_error input={input_data[:120]!r}")
         sys.exit(0)
 
     event_name = first(payload, "hook_event_name", "hookEventName", "event_name", "event", default="")
     if event_name not in ["afterFileEdit", "afterTabFileEdit", "beforeSubmitPrompt"]:
-        debug_log(f"skip: unknown event_name={event_name!r}")
+        always_log(f"SKIP unknown_event={event_name!r}")
         sys.exit(0)
 
     # Handle beforeSubmitPrompt - cache the prompt
@@ -136,7 +204,7 @@ def main():
         os.makedirs(prompt_dir, exist_ok=True)
         with open(os.path.join(prompt_dir, f"{conversation_id}.txt"), "w") as f:
             f.write(prompt)
-        debug_log(f"cached prompt for conversation_id={conversation_id}")
+        always_log(f"cached_prompt conv={conversation_id}")
         sys.exit(0)
 
     cwd_raw = first(payload, "cwd", "workspace", "workspace_path", "workspacePath", default=os.getcwd())
@@ -147,12 +215,12 @@ def main():
     if not abs_file and isinstance(payload.get("file"), dict):
         abs_file = first(payload.get("file", {}), "path", "file_path", "filePath", default="")
     if not abs_file:
-        debug_log("skip: missing abs_file")
+        always_log("SKIP missing_abs_file")
         sys.exit(0)
 
     abs_file = normalize_path(str(abs_file), cwd)
     if not abs_file:
-        debug_log("skip: invalid abs_file after normalize")
+        always_log("SKIP invalid_abs_file_after_normalize")
         sys.exit(0)
 
     file_repo_root = find_repo_root_from_path(abs_file)
@@ -161,21 +229,25 @@ def main():
 
     in_repo = is_git_repo(repo_root)
     if in_repo and not is_within_repo(abs_file, repo_root):
-        debug_log(f"skip: file outside repo abs_file={abs_file!r} repo_root={repo_root!r}")
+        always_log(f"SKIP file_outside_repo file={abs_file!r} repo={repo_root!r}")
         sys.exit(0)
 
     # Get prompt for agent mode
     if event_name == "afterFileEdit":
         conversation_id = first(payload, "conversation_id", "conversationId", default="")
-        prompt = get_cached_prompt(conversation_id) if conversation_id else "unknown"
+        prompt = ""
+        if conversation_id:
+            prompt = get_cached_prompt(conversation_id)
+            if not prompt and repo_root:
+                prompt = get_prompt_from_transcript(conversation_id, repo_root)
+        if not prompt:
+            prompt = "unknown"
         mode = "agent"
     else:  # afterTabFileEdit
         prompt = None
         mode = "tab"
 
     timestamp = datetime.now(timezone.utc).isoformat()
-
-    # Model comes from payload in Cursor
     model = first(payload, "model", "model_name", "modelName", default="cursor-unknown")
 
     entry = {
@@ -207,22 +279,26 @@ def main():
                 end = ch.get("endLine") or ch.get("line_end") or start
                 if isinstance(start, int) and isinstance(end, int):
                     new_lines.extend(list(range(min(start, end), max(start, end) + 1)))
+
         entry["lines"] = new_lines if new_lines else old_lines
+        always_log(
+            f"event={event_name} file={entry['file']!r} model={model!r} "
+            f"n_lines={len(entry['lines'])} "
+            f"payload_old={old_lines} payload_new={new_lines} "
+            f"repo={repo_root!r}"
+        )
     else:  # tab completion
         line_num = first(payload, "line_number", "lineNumber", default=1)
         entry["lines"] = [line_num if isinstance(line_num, int) else 1]
+        always_log(f"event={event_name} file={entry['file']!r} line={line_num}")
 
     session_log = get_session_log(cwd, repo_root if in_repo else "")
     if session_log is None:
-        debug_log(f"skip: agentdiff init not run in {repo_root!r}")
+        always_log(f"SKIP no_agentdiff_init repo={repo_root!r}")
         sys.exit(0)
     with open(session_log, "a") as f:
         f.write(json.dumps(entry) + "\n")
-    debug_log(
-        "wrote entry "
-        f"event={event_name} file={entry['file']} lines={entry.get('lines')} "
-        f"cwd={cwd!r} repo_root={repo_root!r} session_log={session_log!r}"
-    )
+    always_log(f"WROTE file={entry['file']!r} lines={entry.get('lines')} session_log={session_log!r}")
 
 
 if __name__ == "__main__":

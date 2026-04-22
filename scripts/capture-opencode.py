@@ -4,6 +4,7 @@ AgentDiff capture script for OpenCode plugin hooks.
 """
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -42,6 +43,91 @@ def find_repo_root(cwd: str) -> str:
         return result.stdout.strip() if result.returncode == 0 else cwd
     except Exception:
         return cwd
+
+
+_OPENCODE_DB = os.path.expanduser("~/.local/share/opencode/opencode.db")
+_OPENCODE_MODEL_JSON = os.path.expanduser("~/.local/state/opencode/model.json")
+
+
+def get_opencode_model(session_id: str) -> str:
+    """Look up the model used in an OpenCode session.
+
+    Primary: query the SQLite DB for the most-recent assistant message's modelID.
+    Fallback: ~/.local/state/opencode/model.json → recent[0].modelID.
+    """
+    if os.path.exists(_OPENCODE_DB):
+        try:
+            conn = sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)
+            row = conn.execute(
+                "SELECT json_extract(data, '$.modelID') "
+                "FROM message "
+                "WHERE session_id=? AND json_extract(data,'$.role')='assistant' "
+                "ORDER BY time_created DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            conn.close()
+            if row and row[0]:
+                debug_log(f"opencode model from DB: {row[0]!r}")
+                return str(row[0])
+        except Exception as exc:
+            debug_log(f"opencode model DB lookup failed: {exc}")
+
+    # Fallback: most-recently used model from model.json
+    if os.path.exists(_OPENCODE_MODEL_JSON):
+        try:
+            with open(_OPENCODE_MODEL_JSON, encoding="utf-8") as f:
+                data = json.load(f)
+            recent = data.get("recent", [])
+            if recent:
+                model_id = recent[0].get("modelID", "")
+                if model_id:
+                    debug_log(f"opencode model from model.json: {model_id!r}")
+                    return model_id
+        except Exception as exc:
+            debug_log(f"opencode model.json lookup failed: {exc}")
+
+    return "opencode"
+
+
+def get_opencode_prompt(session_id: str) -> str:
+    """Look up the user's initial prompt for an OpenCode session from the SQLite DB.
+
+    message.data contains: {"role":"user", ...}
+    The text is in the part table: {"type":"text","text":"..."}
+    """
+    if not os.path.exists(_OPENCODE_DB):
+        return "unknown"
+    try:
+        conn = sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)
+        # Get first user message for this session
+        row = conn.execute(
+            "SELECT id FROM message WHERE session_id=? "
+            "AND json_extract(data,'$.role')='user' "
+            "ORDER BY time_created ASC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return "unknown"
+        msg_id = row[0]
+        # Get text parts for this message
+        parts = conn.execute(
+            "SELECT data FROM part WHERE message_id=? ORDER BY time_created ASC",
+            (msg_id,),
+        ).fetchall()
+        conn.close()
+        for part_row in parts:
+            try:
+                part = json.loads(part_row[0])
+                if part.get("type") == "text" and part.get("text"):
+                    text = str(part["text"]).strip()
+                    debug_log(f"opencode prompt from DB: {text[:80]!r}")
+                    return text[:500]
+            except Exception:
+                continue
+    except Exception as exc:
+        debug_log(f"opencode prompt DB lookup failed: {exc}")
+    return "unknown"
 
 
 def get_session_log(cwd: str):
@@ -121,8 +207,20 @@ def main() -> int:
 
     rel_file = abs_file[len(repo_root):].lstrip("/") if abs_file.startswith(repo_root) else abs_file
     session_id = str(first(payload, "session_id", "sessionId", default="unknown"))
-    model = str(first(payload, "model", "modelID", "model_id", default="opencode"))
-    prompt = first(payload, "prompt", "user_prompt", "userPrompt", default="unknown")
+
+    # Model: payload may already carry it (from older plugin version); otherwise query DB.
+    raw_model = str(first(payload, "model", "modelID", "model_id", default="") or "")
+    if not raw_model or raw_model == "opencode":
+        model = get_opencode_model(session_id)
+    else:
+        model = raw_model
+
+    # Prompt: payload may carry it; otherwise query DB for first user message.
+    raw_prompt = first(payload, "prompt", "user_prompt", "userPrompt", default="") or ""
+    if not raw_prompt or str(raw_prompt) in ("unknown", "null"):
+        prompt = get_opencode_prompt(session_id)
+    else:
+        prompt = str(raw_prompt)
 
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

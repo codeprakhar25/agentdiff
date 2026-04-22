@@ -70,9 +70,9 @@ fn configure_cursor_hooks_file(
     let mut hooks_cfg: serde_json::Value =
         serde_json::from_str(&raw).context("parsing hooks.json")?;
 
-    let hooks = hooks_cfg
-        .as_object_mut()
-        .unwrap()
+    let obj = hooks_cfg.as_object_mut().unwrap();
+    obj.entry("version").or_insert(serde_json::json!(1));
+    let hooks = obj
         .entry("hooks")
         .or_insert(serde_json::json!({}))
         .as_object_mut()

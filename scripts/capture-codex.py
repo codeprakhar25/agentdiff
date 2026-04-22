@@ -17,15 +17,26 @@ def debug_enabled() -> bool:
     return os.environ.get("AGENTDIFF_DEBUG", "").lower() in {"1", "true", "yes", "on"}
 
 
+def _write_log(path: str, message: str) -> None:
+    try:
+        log_dir = os.path.expanduser("~/.agentdiff/logs")
+        os.makedirs(log_dir, exist_ok=True)
+        ts = datetime.now(timezone.utc).isoformat()
+        with open(os.path.join(log_dir, path), "a", encoding="utf-8") as f:
+            f.write(f"{ts} {message}\n")
+    except Exception:
+        pass
+
+
+def always_log(message: str) -> None:
+    """Write to codex.log unconditionally — key events, no secrets."""
+    _write_log("capture-codex.log", message)
+
+
 def debug_log(message: str) -> None:
     if not debug_enabled():
         return
-    log_dir = os.path.expanduser("~/.agentdiff/logs")
-    os.makedirs(log_dir, exist_ok=True)
-    path = os.path.join(log_dir, "capture-codex.log")
-    ts = datetime.now(timezone.utc).isoformat()
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(f"{ts} {message}\n")
+    _write_log("capture-codex-debug.log", message)
 
 
 def first(payload: dict, *keys, default=None):
@@ -37,6 +48,46 @@ def first(payload: dict, *keys, default=None):
 
 def codex_sessions_root() -> str:
     return os.environ.get("CODEX_SESSIONS_ROOT", os.path.expanduser("~/.codex/sessions"))
+
+
+def _tail_read_jsonl(path: str, chunk_size: int = 32768) -> List[dict]:
+    """Read JSONL lines from the end of a potentially large file, most-recent first."""
+    results: List[dict] = []
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            offset = max(0, size - chunk_size)
+            fh.seek(offset)
+            raw = fh.read()
+        if offset > 0:
+            nl = raw.find(b"\n")
+            raw = raw[nl + 1:] if nl >= 0 else raw
+        for line in reversed(raw.decode("utf-8", errors="replace").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                results.append(json.loads(line))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return results
+
+
+def get_prompt_from_history(session_id: str) -> str:
+    """Read the most-recent user prompt for session_id from ~/.codex/history.jsonl.
+
+    history.jsonl format:
+      {"session_id":"...","ts":1234567890,"text":"..."}
+
+    Returns the text of the most-recent entry whose session_id matches.
+    """
+    path = os.path.expanduser("~/.codex/history.jsonl")
+    for entry in _tail_read_jsonl(path):
+        if entry.get("session_id") == session_id and entry.get("text"):
+            return str(entry["text"])[:500]
+    return ""
 
 
 def find_repo_root(cwd: str) -> str:
@@ -586,6 +637,7 @@ def main() -> int:
 
     try:
         cwd, model, session_id, turn_id, prompt, event_name = extract_codex_context(events)
+        always_log(f"event={event_name!r} turn={turn_id!r} cwd={cwd!r} model={model!r} session={session_id!r}")
         debug_log(f"event_name={event_name!r} turn_id={turn_id!r} cwd_from_events={cwd!r}")
 
         # task_started / UserPromptSubmit: snapshot dirty files so task_complete can
@@ -616,6 +668,7 @@ def main() -> int:
             "agent_turn_stop",
         }
         if event_name and event_name in known_skip_events:
+            always_log(f"SKIP non_edit_event={event_name!r}")
             debug_log(f"skip: non-edit event {event_name!r}")
             run_forward(forward_cmd, input_data)
             return 0
@@ -637,23 +690,15 @@ def main() -> int:
             repo_root, chosen_cwd, changed = resolve_repo_and_changes([recovered_cwd] if recovered_cwd else [])
 
         if not changed:
+            always_log(f"SKIP no_changed_lines candidates={candidate_cwds}")
             debug_log("skip: no changed lines found in any candidate repo")
             run_forward(forward_cmd, input_data)
             return 0
 
-        # Filter out files that were already dirty before this codex task started.
-        # This prevents codex from claiming attribution for changes made by other
-        # agents (claude-code, opencode, etc.) that were pending at task_started.
-        pre_task_files = load_and_consume_pre_task_state(repo_root) if repo_root else set()
-        if pre_task_files:
-            changed = {f: lines for f, lines in changed.items() if f not in pre_task_files}
-            debug_log(
-                f"post-filter: {len(changed)} files after excluding {len(pre_task_files)} pre-task dirty files"
-            )
-            if not changed:
-                debug_log("skip: all changed files were pre-existing dirty (not codex's work)")
-                run_forward(forward_cmd, input_data)
-                return 0
+        # Consume (and discard) the pre-task snapshot — kept for hook compatibility
+        # but no longer used to filter. Attribution conflicts across agents are
+        # resolved by prepare-ledger at commit time, not here.
+        load_and_consume_pre_task_state(repo_root) if repo_root else None
 
         if not chosen_cwd:
             chosen_cwd = cwd or os.getcwd()
@@ -670,6 +715,7 @@ def main() -> int:
         timestamp = datetime.now(timezone.utc).isoformat()
         session_log = get_session_log(chosen_cwd)
         if session_log is None:
+            always_log(f"SKIP no_agentdiff_init cwd={chosen_cwd!r}")
             debug_log(f"skip: agentdiff init not run in {chosen_cwd!r}")
             return 0
 
@@ -685,12 +731,13 @@ def main() -> int:
                     "tool": event_name or "task_complete",
                     "file": file_path,
                     "abs_file": abs_file,
-                    "prompt": prompt or "unknown",
+                    "prompt": prompt or get_prompt_from_history(str(session_id)) or "unknown",
                     "acceptance": "verbatim",
                     "lines": lines,
                 }
                 f.write(json.dumps(entry) + "\n")
 
+        always_log(f"WROTE {len(changed)} entries files={list(changed.keys())} model={model!r} session={session_log!r}")
         debug_log(f"wrote {len(changed)} codex entries to {session_log}")
     finally:
         run_forward(forward_cmd, input_data)

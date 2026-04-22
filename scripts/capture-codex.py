@@ -28,11 +28,6 @@ def _write_log(path: str, message: str) -> None:
         pass
 
 
-def always_log(message: str) -> None:
-    """Write to codex.log unconditionally — key events, no secrets."""
-    _write_log("capture-codex.log", message)
-
-
 def debug_log(message: str) -> None:
     if not debug_enabled():
         return
@@ -637,7 +632,7 @@ def main() -> int:
 
     try:
         cwd, model, session_id, turn_id, prompt, event_name = extract_codex_context(events)
-        always_log(f"event={event_name!r} turn={turn_id!r} cwd={cwd!r} model={model!r} session={session_id!r}")
+        debug_log(f"event={event_name!r} turn={turn_id!r} cwd={cwd!r} model={model!r} session={session_id!r}")
         debug_log(f"event_name={event_name!r} turn_id={turn_id!r} cwd_from_events={cwd!r}")
 
         # task_started / UserPromptSubmit: snapshot dirty files so task_complete can
@@ -668,7 +663,7 @@ def main() -> int:
             "agent_turn_stop",
         }
         if event_name and event_name in known_skip_events:
-            always_log(f"SKIP non_edit_event={event_name!r}")
+            debug_log(f"SKIP non_edit_event={event_name!r}")
             debug_log(f"skip: non-edit event {event_name!r}")
             run_forward(forward_cmd, input_data)
             return 0
@@ -690,7 +685,7 @@ def main() -> int:
             repo_root, chosen_cwd, changed = resolve_repo_and_changes([recovered_cwd] if recovered_cwd else [])
 
         if not changed:
-            always_log(f"SKIP no_changed_lines candidates={candidate_cwds}")
+            debug_log(f"SKIP no_changed_lines candidates={candidate_cwds}")
             debug_log("skip: no changed lines found in any candidate repo")
             run_forward(forward_cmd, input_data)
             return 0
@@ -715,7 +710,7 @@ def main() -> int:
         timestamp = datetime.now(timezone.utc).isoformat()
         session_log = get_session_log(chosen_cwd)
         if session_log is None:
-            always_log(f"SKIP no_agentdiff_init cwd={chosen_cwd!r}")
+            debug_log(f"SKIP no_agentdiff_init cwd={chosen_cwd!r}")
             debug_log(f"skip: agentdiff init not run in {chosen_cwd!r}")
             return 0
 
@@ -737,7 +732,7 @@ def main() -> int:
                 }
                 f.write(json.dumps(entry) + "\n")
 
-        always_log(f"WROTE {len(changed)} entries files={list(changed.keys())} model={model!r} session={session_log!r}")
+        debug_log(f"WROTE {len(changed)} entries files={list(changed.keys())} model={model!r} session={session_log!r}")
         debug_log(f"wrote {len(changed)} codex entries to {session_log}")
     finally:
         run_forward(forward_cmd, input_data)

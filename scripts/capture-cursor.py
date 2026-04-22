@@ -25,11 +25,6 @@ def _write_log(path: str, message: str) -> None:
         pass
 
 
-def always_log(message: str) -> None:
-    """Write to cursor.log unconditionally — key events, no secrets."""
-    _write_log("capture-cursor.log", message)
-
-
 def debug_log(message: str) -> None:
     if not debug_enabled():
         return
@@ -188,12 +183,12 @@ def main():
     try:
         payload = json.loads(input_data)
     except json.JSONDecodeError:
-        always_log(f"SKIP parse_error input={input_data[:120]!r}")
+        debug_log(f"SKIP parse_error input={input_data[:120]!r}")
         sys.exit(0)
 
     event_name = first(payload, "hook_event_name", "hookEventName", "event_name", "event", default="")
     if event_name not in ["afterFileEdit", "afterTabFileEdit", "beforeSubmitPrompt"]:
-        always_log(f"SKIP unknown_event={event_name!r}")
+        debug_log(f"SKIP unknown_event={event_name!r}")
         sys.exit(0)
 
     # Handle beforeSubmitPrompt - cache the prompt
@@ -204,7 +199,7 @@ def main():
         os.makedirs(prompt_dir, exist_ok=True)
         with open(os.path.join(prompt_dir, f"{conversation_id}.txt"), "w") as f:
             f.write(prompt)
-        always_log(f"cached_prompt conv={conversation_id}")
+        debug_log(f"cached_prompt conv={conversation_id}")
         sys.exit(0)
 
     cwd_raw = first(payload, "cwd", "workspace", "workspace_path", "workspacePath", default=os.getcwd())
@@ -215,12 +210,12 @@ def main():
     if not abs_file and isinstance(payload.get("file"), dict):
         abs_file = first(payload.get("file", {}), "path", "file_path", "filePath", default="")
     if not abs_file:
-        always_log("SKIP missing_abs_file")
+        debug_log("SKIP missing_abs_file")
         sys.exit(0)
 
     abs_file = normalize_path(str(abs_file), cwd)
     if not abs_file:
-        always_log("SKIP invalid_abs_file_after_normalize")
+        debug_log("SKIP invalid_abs_file_after_normalize")
         sys.exit(0)
 
     file_repo_root = find_repo_root_from_path(abs_file)
@@ -229,7 +224,7 @@ def main():
 
     in_repo = is_git_repo(repo_root)
     if in_repo and not is_within_repo(abs_file, repo_root):
-        always_log(f"SKIP file_outside_repo file={abs_file!r} repo={repo_root!r}")
+        debug_log(f"SKIP file_outside_repo file={abs_file!r} repo={repo_root!r}")
         sys.exit(0)
 
     # Get prompt for agent mode
@@ -281,7 +276,7 @@ def main():
                     new_lines.extend(list(range(min(start, end), max(start, end) + 1)))
 
         entry["lines"] = new_lines if new_lines else old_lines
-        always_log(
+        debug_log(
             f"event={event_name} file={entry['file']!r} model={model!r} "
             f"n_lines={len(entry['lines'])} "
             f"payload_old={old_lines} payload_new={new_lines} "
@@ -290,15 +285,15 @@ def main():
     else:  # tab completion
         line_num = first(payload, "line_number", "lineNumber", default=1)
         entry["lines"] = [line_num if isinstance(line_num, int) else 1]
-        always_log(f"event={event_name} file={entry['file']!r} line={line_num}")
+        debug_log(f"event={event_name} file={entry['file']!r} line={line_num}")
 
     session_log = get_session_log(cwd, repo_root if in_repo else "")
     if session_log is None:
-        always_log(f"SKIP no_agentdiff_init repo={repo_root!r}")
+        debug_log(f"SKIP no_agentdiff_init repo={repo_root!r}")
         sys.exit(0)
     with open(session_log, "a") as f:
         f.write(json.dumps(entry) + "\n")
-    always_log(f"WROTE file={entry['file']!r} lines={entry.get('lines')} session_log={session_log!r}")
+    debug_log(f"WROTE file={entry['file']!r} lines={entry.get('lines')} session_log={session_log!r}")
 
 
 if __name__ == "__main__":

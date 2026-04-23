@@ -331,10 +331,13 @@ def main() -> int:
     # Exception: if the file appears in files_read from the MCP pending context and
     # there is a non-human top-level agent, the MCP context is sufficient evidence —
     # use the MCP agent/model rather than falling back to human.
-    files_read_set = {os.path.basename(f) for f in files_read} | set(files_read)
+    files_read_rel = {
+        os.path.relpath(f, repo_root) if os.path.isabs(f) and f.startswith(repo_root) else f
+        for f in files_read
+    }
     for fp in files_touched:
         if fp not in events_by_file:
-            if agent != "human" and (fp in files_read_set or os.path.basename(fp) in files_read_set):
+            if agent != "human" and fp in files_read_rel:
                 attribution[fp] = {"agent": agent, "model": model}
             else:
                 attribution[fp] = {"agent": "human", "model": "human"}

@@ -2,6 +2,7 @@
 """
 AgentDiff capture script for OpenCode plugin hooks.
 """
+import contextlib
 import json
 import os
 import sqlite3
@@ -45,7 +46,11 @@ def find_repo_root(cwd: str) -> str:
         return cwd
 
 
-_OPENCODE_DB = os.path.expanduser("~/.local/share/opencode/opencode.db")
+_OPENCODE_DB_CANDIDATES = [
+    os.path.expanduser("~/.local/share/opencode/opencode.db"),
+    os.path.expanduser("~/.opencode/opencode.db"),
+]
+_OPENCODE_DB = next((p for p in _OPENCODE_DB_CANDIDATES if os.path.exists(p)), _OPENCODE_DB_CANDIDATES[0])
 _OPENCODE_MODEL_JSON = os.path.expanduser("~/.local/state/opencode/model.json")
 
 
@@ -57,15 +62,14 @@ def get_opencode_model(session_id: str) -> str:
     """
     if os.path.exists(_OPENCODE_DB):
         try:
-            conn = sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)
-            row = conn.execute(
-                "SELECT json_extract(data, '$.modelID') "
-                "FROM message "
-                "WHERE session_id=? AND json_extract(data,'$.role')='assistant' "
-                "ORDER BY time_created DESC LIMIT 1",
-                (session_id,),
-            ).fetchone()
-            conn.close()
+            with contextlib.closing(sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)) as conn:
+                row = conn.execute(
+                    "SELECT json_extract(data, '$.modelID') "
+                    "FROM message "
+                    "WHERE session_id=? AND json_extract(data,'$.role')='assistant' "
+                    "ORDER BY time_created DESC LIMIT 1",
+                    (session_id,),
+                ).fetchone()
             if row and row[0]:
                 debug_log(f"opencode model from DB: {row[0]!r}")
                 return str(row[0])
@@ -98,24 +102,20 @@ def get_opencode_prompt(session_id: str) -> str:
     if not os.path.exists(_OPENCODE_DB):
         return "unknown"
     try:
-        conn = sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)
-        # Get first user message for this session
-        row = conn.execute(
-            "SELECT id FROM message WHERE session_id=? "
-            "AND json_extract(data,'$.role')='user' "
-            "ORDER BY time_created ASC LIMIT 1",
-            (session_id,),
-        ).fetchone()
-        if not row:
-            conn.close()
-            return "unknown"
-        msg_id = row[0]
-        # Get text parts for this message
-        parts = conn.execute(
-            "SELECT data FROM part WHERE message_id=? ORDER BY time_created ASC",
-            (msg_id,),
-        ).fetchall()
-        conn.close()
+        with contextlib.closing(sqlite3.connect(f"file:{_OPENCODE_DB}?mode=ro", uri=True, timeout=2)) as conn:
+            row = conn.execute(
+                "SELECT id FROM message WHERE session_id=? "
+                "AND json_extract(data,'$.role')='user' "
+                "ORDER BY time_created ASC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                return "unknown"
+            msg_id = row[0]
+            parts = conn.execute(
+                "SELECT data FROM part WHERE message_id=? ORDER BY time_created ASC",
+                (msg_id,),
+            ).fetchall()
         for part_row in parts:
             try:
                 part = json.loads(part_row[0])

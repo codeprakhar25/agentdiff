@@ -633,7 +633,6 @@ def main() -> int:
     try:
         cwd, model, session_id, turn_id, prompt, event_name = extract_codex_context(events)
         debug_log(f"event={event_name!r} turn={turn_id!r} cwd={cwd!r} model={model!r} session={session_id!r}")
-        debug_log(f"event_name={event_name!r} turn_id={turn_id!r} cwd_from_events={cwd!r}")
 
         # task_started / UserPromptSubmit: snapshot dirty files so task_complete can
         # isolate what codex changed. UserPromptSubmit fires from hooks.json before
@@ -664,7 +663,6 @@ def main() -> int:
         }
         if event_name and event_name in known_skip_events:
             debug_log(f"SKIP non_edit_event={event_name!r}")
-            debug_log(f"skip: non-edit event {event_name!r}")
             run_forward(forward_cmd, input_data)
             return 0
 
@@ -686,7 +684,6 @@ def main() -> int:
 
         if not changed:
             debug_log(f"SKIP no_changed_lines candidates={candidate_cwds}")
-            debug_log("skip: no changed lines found in any candidate repo")
             run_forward(forward_cmd, input_data)
             return 0
 
@@ -711,7 +708,6 @@ def main() -> int:
         session_log = get_session_log(chosen_cwd)
         if session_log is None:
             debug_log(f"SKIP no_agentdiff_init cwd={chosen_cwd!r}")
-            debug_log(f"skip: agentdiff init not run in {chosen_cwd!r}")
             return 0
 
         with open(session_log, "a", encoding="utf-8") as f:
@@ -733,7 +729,6 @@ def main() -> int:
                 f.write(json.dumps(entry) + "\n")
 
         debug_log(f"WROTE {len(changed)} entries files={list(changed.keys())} model={model!r} session={session_log!r}")
-        debug_log(f"wrote {len(changed)} codex entries to {session_log}")
     finally:
         run_forward(forward_cmd, input_data)
 

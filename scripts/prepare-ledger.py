@@ -328,11 +328,19 @@ def main() -> int:
             }
 
     # Files committed with no captured session event → attribute to human.
-    # Without this, finalize-ledger.py would inherit the dominant AI agent for these
-    # files even though we have no evidence the AI touched them.
+    # Exception: if the file appears in files_read from the MCP pending context and
+    # there is a non-human top-level agent, the MCP context is sufficient evidence —
+    # use the MCP agent/model rather than falling back to human.
+    files_read_rel = {
+        os.path.relpath(f, repo_root) if os.path.isabs(f) and f.startswith(repo_root) else f
+        for f in files_read
+    }
     for fp in files_touched:
         if fp not in events_by_file:
-            attribution[fp] = {"agent": "human", "model": "human"}
+            if agent != "human" and fp in files_read_rel:
+                attribution[fp] = {"agent": agent, "model": model}
+            else:
+                attribution[fp] = {"agent": "human", "model": "human"}
 
     payload = {
         "captured_at": datetime.now(timezone.utc).isoformat(),

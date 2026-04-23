@@ -85,49 +85,103 @@ def get_session_log(cwd: str):
     return None
 
 
-def get_model_and_prompt(cwd: str, session_id: str) -> tuple:
-    """Read model and prompt from Claude Code session JSONL.
+def _tail_read_jsonl(path: str, chunk_size: int = 32768) -> list:
+    """Read JSONL lines from the end of a potentially large file.
 
-    Claude Code stores session files at:
-      ~/.claude/projects/{repo-slug}/{session_id}.jsonl
-    where the repo slug is the repo path with slashes replaced by dashes.
-    We glob-search all project dirs to avoid reconstructing the slug.
+    Returns parsed dicts, most-recent first.  Reads at most chunk_size bytes
+    from the end on the first pass — enough for thousands of short entries.
+    """
+    results = []
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            offset = max(0, size - chunk_size)
+            fh.seek(offset)
+            raw = fh.read()
+        if offset > 0:
+            # Skip the (possibly partial) first line we cut into.
+            nl = raw.find(b"\n")
+            raw = raw[nl + 1:] if nl >= 0 else raw
+        for line in reversed(raw.decode("utf-8", errors="replace").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                results.append(json.loads(line))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return results
+
+
+def get_prompt_from_history(session_id: str) -> str:
+    """Read the most-recent user prompt for session_id from ~/.claude/history.jsonl.
+
+    history.jsonl format (one JSON object per line):
+      {"display":"...", "pastedContents":{...}, "sessionId":"...", "project":"...", "timestamp":...}
+
+    We take the most-recent entry whose sessionId matches and whose display
+    is not a slash command.  We also append any inline pasted text content.
+    """
+    path = os.path.expanduser("~/.claude/history.jsonl")
+    entries = _tail_read_jsonl(path)
+    for entry in entries:
+        if entry.get("sessionId") != session_id:
+            continue
+        display = entry.get("display", "").strip()
+        if not display or display.startswith("/"):
+            continue
+        # Append pasted content that has actual text (not just a hash).
+        extra_parts = []
+        for pasted in (entry.get("pastedContents") or {}).values():
+            if isinstance(pasted, dict) and pasted.get("type") == "text":
+                content = pasted.get("content", "")
+                if content:
+                    extra_parts.append(content[:200])
+        if extra_parts:
+            display = display + " [pasted: " + " | ".join(extra_parts) + "]"
+        return display[:500]
+    return "unknown"
+
+
+def get_model_and_prompt(cwd: str, session_id: str) -> tuple:
+    """Read model from Claude Code session JSONL, prompt from history.jsonl.
+
+    Model: ~/.claude/projects/{repo-slug}/{session_id}.jsonl — assistant entries.
+      Skips <synthetic> model values (injected during context compression).
+    Prompt: ~/.claude/history.jsonl — most-recent display for this sessionId.
     """
     import glob as _glob
+    model = "unknown"
     try:
         home = os.path.expanduser("~")
         pattern = os.path.join(home, ".claude", "projects", "**", f"{session_id}.jsonl")
+        debug_log(f"glob pattern: {pattern}")
         matches = _glob.glob(pattern, recursive=True)
-        if not matches:
-            return "unknown", "unknown"
+        debug_log(f"glob matches: {matches}")
+        if matches:
+            session_path = matches[0]
+            debug_log(f"session_path: {session_path}")
+            for entry in _tail_read_jsonl(session_path):
+                if entry.get("type") == "assistant":
+                    m = entry.get("message", {}).get("model", "")
+                    if m and m != "<synthetic>":
+                        model = m
+                        debug_log(f"model found: {model}")
+                        break
+    except Exception as exc:
+        debug_log(f"model lookup error: {exc}")
 
-        session_path = matches[0]
-        with open(session_path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
-
-        model = "unknown"
-        for line in reversed(lines):
-            try:
-                entry = json.loads(line)
-                if entry.get("type") == "assistant" and entry.get("message", {}).get("model"):
-                    model = entry["message"]["model"]
-                    break
-            except Exception:
-                continue
-
-        prompt = "unknown"
-        for line in reversed(lines):
-            try:
-                entry = json.loads(line)
-                if entry.get("type") == "last-prompt":
-                    prompt = entry.get("lastPrompt", "unknown")
-                    break
-            except Exception:
-                continue
-
-        return model, prompt
-    except Exception:
-        return "unknown", "unknown"
+    prompt = get_prompt_from_history(session_id)
+    # Allow test/CI injection via env var when history lookup can't find the session.
+    if prompt == "unknown":
+        env_prompt = os.environ.get("AGENTDIFF_PROMPT", "")
+        if env_prompt:
+            prompt = env_prompt
+            debug_log(f"prompt from AGENTDIFF_PROMPT env var")
+    debug_log(f"prompt: {prompt[:80]!r}")
+    return model, prompt
 
 
 def is_in_repo(abs_file: str, repo_root: str) -> bool:
@@ -195,6 +249,7 @@ def main():
         sys.exit(0)
 
     session_id = first(payload, "session_id", "sessionId", default="unknown")
+    debug_log(f"before get_model_and_prompt session_id={session_id}")
     model, prompt = get_model_and_prompt(cwd, session_id)
 
     timestamp = datetime.now(timezone.utc).isoformat()

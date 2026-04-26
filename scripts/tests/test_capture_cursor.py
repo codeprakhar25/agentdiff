@@ -28,6 +28,18 @@ class CaptureCursorTests(unittest.TestCase):
         normalized = self.mod.normalize_path(r"\home\prakh\repo\src\main.rs", "/tmp")
         self.assertEqual(normalized, "/home/prakh/repo/src/main.rs")
 
+    def test_extract_lines_from_cursor_change_ranges(self):
+        payload = [
+            {"startLine": 3, "endLine": 5},
+            {"range": {"start": {"line": 8}, "end": {"line": 9}}},
+            {"line_number": "12"},
+        ]
+        self.assertEqual(self.mod.extract_lines_from_changes(payload), [3, 4, 5, 8, 9, 12])
+
+    def test_extract_lines_accepts_mixed_line_lists(self):
+        payload = [2, "4", {"start_line": 7, "end_line": 8}, 0, "nope"]
+        self.assertEqual(self.mod.extract_lines(payload), [2, 4, 7, 8])
+
     def test_session_log_uses_repo_hint(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"

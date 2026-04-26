@@ -38,6 +38,78 @@ def first(payload: dict, *keys, default=None):
     return default
 
 
+def coerce_line(value):
+    try:
+        n = int(value)
+        return n if n > 0 else None
+    except Exception:
+        return None
+
+
+def _add_line_range(out: set, start, end=None):
+    start_n = coerce_line(start)
+    end_n = coerce_line(end if end is not None else start)
+    if start_n is None or end_n is None:
+        return
+    for ln in range(min(start_n, end_n), max(start_n, end_n) + 1):
+        out.add(ln)
+
+
+def _extract_line_from_position(value):
+    if isinstance(value, dict):
+        return first(value, "line", "lineNumber", "line_number")
+    return value
+
+
+def _add_lines_from_range_object(out: set, value):
+    if not isinstance(value, dict):
+        return
+
+    start = first(value, "startLine", "start_line", "line_start", "line", "lineNumber", "line_number")
+    end = first(value, "endLine", "end_line", "line_end", default=start)
+    if start is not None:
+        _add_line_range(out, start, end)
+        return
+
+    start_pos = _extract_line_from_position(value.get("start"))
+    end_pos = _extract_line_from_position(value.get("end"))
+    if start_pos is not None:
+        _add_line_range(out, start_pos, end_pos if end_pos is not None else start_pos)
+
+
+def extract_lines(value):
+    """Extract 1-indexed line numbers from common Cursor hook payload shapes."""
+    out = set()
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, dict):
+                _add_lines_from_range_object(out, item)
+            else:
+                line = coerce_line(item)
+                if line is not None:
+                    out.add(line)
+    elif isinstance(value, dict):
+        _add_lines_from_range_object(out, value)
+    else:
+        line = coerce_line(value)
+        if line is not None:
+            out.add(line)
+    return sorted(out)
+
+
+def extract_lines_from_changes(changes):
+    out = set()
+    if not isinstance(changes, list):
+        return []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        _add_lines_from_range_object(out, change)
+        for key in ("range", "newRange", "new_range", "selection", "targetSelection"):
+            _add_lines_from_range_object(out, change.get(key))
+    return sorted(out)
+
+
 def find_repo_root(cwd: str) -> str:
     try:
         result = subprocess.run(
@@ -260,20 +332,12 @@ def main():
 
     # Line numbers from payload
     if event_name == "afterFileEdit":
-        old_lines = first(payload, "old_lines", "oldLines", default=[])
-        new_lines = first(payload, "new_lines", "newLines", default=[])
-        if not isinstance(old_lines, list):
-            old_lines = []
-        if not isinstance(new_lines, list):
-            new_lines = []
-        if not new_lines and isinstance(payload.get("changes"), list):
-            for ch in payload["changes"]:
-                if not isinstance(ch, dict):
-                    continue
-                start = ch.get("startLine") or ch.get("line_start")
-                end = ch.get("endLine") or ch.get("line_end") or start
-                if isinstance(start, int) and isinstance(end, int):
-                    new_lines.extend(list(range(min(start, end), max(start, end) + 1)))
+        old_lines = extract_lines(first(payload, "old_lines", "oldLines", default=[]))
+        new_lines = extract_lines(first(payload, "new_lines", "newLines", "changed_lines", "changedLines", "lines", default=[]))
+        if not new_lines:
+            new_lines = extract_lines_from_changes(payload.get("changes"))
+        if not new_lines:
+            new_lines = extract_lines_from_changes(payload.get("edits"))
 
         entry["lines"] = new_lines if new_lines else old_lines
         debug_log(

@@ -85,6 +85,10 @@ fn run_git_diff(repo_root: &std::path::Path, commit: &str) -> Result<String> {
         .args(["diff", "--unified=0", "--no-color", "--no-ext-diff", &spec])
         .current_dir(repo_root)
         .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git diff failed: {}", stderr.trim());
+    }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 

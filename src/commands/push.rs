@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::cli::PushArgs;
 use crate::store::{self, Store};
-use crate::util::ok;
+use crate::util::{ok, warn};
 
 pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
     let branch = match &args.branch {
@@ -117,13 +117,20 @@ pub fn run(store: &Store, args: &PushArgs) -> Result<()> {
         prune_local_traces(&local_path, args.quiet)?;
     }
 
-    if !args.quiet {
+    if !args.quiet && remote_pushed {
         println!(
             "  {} pushed {} trace(s) for branch '{}' ({} total on ref)",
             ok(),
             new_count,
             branch,
             remote_traces.len()
+        );
+    } else if !args.quiet {
+        println!(
+            "  {} wrote {} trace(s) for branch '{}' to local ref; remote sync pending",
+            warn(),
+            new_count,
+            branch
         );
     }
 

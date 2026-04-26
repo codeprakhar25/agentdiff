@@ -104,9 +104,11 @@ def extract_lines_from_changes(changes):
     for change in changes:
         if not isinstance(change, dict):
             continue
+        before = len(out)
         _add_lines_from_range_object(out, change)
-        for key in ("range", "newRange", "new_range", "selection", "targetSelection"):
-            _add_lines_from_range_object(out, change.get(key))
+        if len(out) == before:
+            for key in ("range", "newRange", "new_range", "selection", "targetSelection"):
+                _add_lines_from_range_object(out, change.get(key))
     return sorted(out)
 
 

@@ -24,8 +24,8 @@ pub fn run(store: &Store, args: &ReportArgs) -> Result<()> {
     let mut entries = store.load_entries()?;
 
     if let Some(ref since) = args.since {
-        if let Ok(since_ts) = chrono::DateTime::parse_from_rfc3339(since)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
+        if let Ok(since_ts) =
+            chrono::DateTime::parse_from_rfc3339(since).map(|dt| dt.with_timezone(&chrono::Utc))
         {
             entries.retain(|e| e.timestamp >= since_ts);
         }
@@ -67,7 +67,7 @@ fn post_pr_comment(repo_root: &Path, body: &str, pr_number: Option<u64>) -> Resu
         cmd.arg(n.to_string());
     }
 
-    cmd.args(["--body", body])
+    cmd.args(["--body", body, "--edit-last", "--create-if-none"])
         .current_dir(repo_root)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
@@ -241,8 +241,7 @@ fn write_or_stdout(path: Option<&Path>, content: &str) -> Result<()> {
                 fs::create_dir_all(parent)
                     .with_context(|| format!("creating {}", parent.display()))?;
             }
-            fs::write(p, content.as_bytes())
-                .with_context(|| format!("writing {}", p.display()))?;
+            fs::write(p, content.as_bytes()).with_context(|| format!("writing {}", p.display()))?;
         }
         None => {
             print!("{content}");

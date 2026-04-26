@@ -54,6 +54,7 @@ on:
 permissions:
   contents: read
   checks: write
+  pull-requests: write
 
 jobs:
   policy:
@@ -67,6 +68,10 @@ jobs:
         run: |
           git fetch origin '+refs/agentdiff/*:refs/agentdiff/*' || true
 
+      - name: Check out PR head branch
+        run: |
+          git checkout -B "${{ github.head_ref }}" "${{ github.event.pull_request.head.sha }}"
+
       - name: Install agentdiff
         run: |
           curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
@@ -75,6 +80,14 @@ jobs:
       - name: Check policy
         run: |
           agentdiff policy check --format github-annotations
+
+      - name: Post attribution comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR="${{ github.event.pull_request.number }}"
+          agentdiff report --format markdown --post-pr-comment "$PR" || true
 "#;
 
 pub fn run(repo_root: &Path, args: &InstallCiArgs) -> Result<()> {
@@ -86,18 +99,35 @@ pub fn run(repo_root: &Path, args: &InstallCiArgs) -> Result<()> {
     let consolidate_path = workflows_dir.join("agentdiff-consolidate.yml");
     let policy_path = workflows_dir.join("agentdiff-policy.yml");
 
-    write_workflow(&consolidate_path, CONSOLIDATE_WORKFLOW, args.force, "agentdiff-consolidate.yml")?;
-    write_workflow(&policy_path, POLICY_WORKFLOW, args.force, "agentdiff-policy.yml")?;
+    write_workflow(
+        &consolidate_path,
+        CONSOLIDATE_WORKFLOW,
+        args.force,
+        "agentdiff-consolidate.yml",
+    )?;
+    write_workflow(
+        &policy_path,
+        POLICY_WORKFLOW,
+        args.force,
+        "agentdiff-policy.yml",
+    )?;
 
     println!();
     println!("  {}", "install-ci complete".bold().green());
     println!();
     println!("  Next steps:");
     println!("    1. Commit the workflow files:");
-    println!("       git add .github/workflows/agentdiff-consolidate.yml .github/workflows/agentdiff-policy.yml");
+    println!(
+        "       git add .github/workflows/agentdiff-consolidate.yml .github/workflows/agentdiff-policy.yml"
+    );
     println!("       git commit -m 'ci: add agentdiff consolidation and policy workflows'");
-    println!("    2. Ensure each developer runs: {}", "agentdiff init".cyan());
-    println!("    3. On merge, traces auto-consolidate and an attribution comment is posted to the PR.");
+    println!(
+        "    2. Ensure each developer runs: {}",
+        "agentdiff init".cyan()
+    );
+    println!(
+        "    3. On merge, traces auto-consolidate and an attribution comment is posted to the PR."
+    );
 
     Ok(())
 }

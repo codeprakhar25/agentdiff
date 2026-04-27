@@ -91,7 +91,11 @@ impl Store {
         // Dedup by id field
         let mut seen = std::collections::HashSet::new();
         values.retain(|v| {
-            let id = v.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let id = v
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if id.is_empty() {
                 true
             } else {
@@ -290,9 +294,7 @@ pub fn write_to_ref(
         "git mktree failed: {}",
         String::from_utf8_lossy(&tree_out.stderr)
     );
-    let tree_sha = String::from_utf8_lossy(&tree_out.stdout)
-        .trim()
-        .to_string();
+    let tree_sha = String::from_utf8_lossy(&tree_out.stdout).trim().to_string();
 
     // Find parent commit if ref already exists.
     let parent = Command::new("git")
@@ -325,9 +327,7 @@ pub fn write_to_ref(
         "git commit-tree failed: {}",
         String::from_utf8_lossy(&commit.stderr)
     );
-    let commit_sha = String::from_utf8_lossy(&commit.stdout)
-        .trim()
-        .to_string();
+    let commit_sha = String::from_utf8_lossy(&commit.stdout).trim().to_string();
 
     // Update the ref.
     let update = Command::new("git")
@@ -390,8 +390,21 @@ fn get_github_nwo(repo_root: &Path) -> Result<(String, String)> {
         .context("git remote get-url origin")?;
     let remote_url = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let host = github_host();
-    parse_github_nwo(&remote_url, &host)
-        .ok_or_else(|| anyhow::anyhow!("origin remote is not a GitHub URL (host={host}): {remote_url}"))
+    parse_github_nwo(&remote_url, &host).ok_or_else(|| {
+        anyhow::anyhow!("origin remote is not a GitHub URL (host={host}): {remote_url}")
+    })
+}
+
+/// Convert a git ref into the path fragment expected by GitHub's ref API.
+///
+/// Per-branch agentdiff refs contain a literal `%2F` when the source branch
+/// has `/` in its name. Percent signs must be escaped in the URL path;
+/// otherwise GitHub decodes `%2F` as a real slash and looks up a different ref.
+fn api_ref_path(ref_name: &str) -> String {
+    ref_name
+        .strip_prefix("refs/")
+        .unwrap_or(ref_name)
+        .replace('%', "%25")
 }
 
 /// Push JSONL content to a GitHub ref using the Git Database API.
@@ -417,7 +430,7 @@ pub fn push_content_to_ref(
 
     let (owner, repo) = get_github_nwo(repo_root)?;
     // API ref format strips "refs/" prefix
-    let api_ref = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
+    let api_ref = api_ref_path(ref_name);
 
     fn gh_api_json(
         owner: &str,
@@ -448,8 +461,8 @@ pub fn push_content_to_ref(
             let err = String::from_utf8_lossy(&out.stderr);
             anyhow::bail!("gh api {method} {full_path} failed: {err}");
         }
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout)
-            .context("parsing gh api response")?;
+        let v: serde_json::Value =
+            serde_json::from_slice(&out.stdout).context("parsing gh api response")?;
         Ok(v)
     }
 
@@ -472,7 +485,10 @@ pub fn push_content_to_ref(
     // Create the blob once — it's content-addressed, so this is idempotent.
     let encoded = base64::engine::general_purpose::STANDARD.encode(content.as_bytes());
     let blob_resp = gh_api_json(
-        &owner, &repo, "POST", "git/blobs",
+        &owner,
+        &repo,
+        "POST",
+        "git/blobs",
         &serde_json::json!({"content": encoded, "encoding": "base64"}),
         repo_root,
     )?;
@@ -487,7 +503,7 @@ pub fn push_content_to_ref(
     // Backoff: 200ms, 400ms, 800ms, 1.6s, 3.2s … capped at 5s per attempt.
     const MAX_RETRIES: u32 = 10;
     for attempt in 0..MAX_RETRIES {
-        let parent_sha = fetch_ref_sha(&owner, &repo, api_ref, repo_root);
+        let parent_sha = fetch_ref_sha(&owner, &repo, &api_ref, repo_root);
 
         // Build tree
         let tree_body = serde_json::json!({
@@ -504,8 +520,14 @@ pub fn push_content_to_ref(
         if let Some(ref p) = parent_sha {
             commit_body["parents"] = serde_json::json!([p]);
         }
-        let commit_resp =
-            gh_api_json(&owner, &repo, "POST", "git/commits", &commit_body, repo_root)?;
+        let commit_resp = gh_api_json(
+            &owner,
+            &repo,
+            "POST",
+            "git/commits",
+            &commit_body,
+            repo_root,
+        )?;
         let commit_sha = commit_resp["sha"]
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("no sha in commit response"))?
@@ -514,14 +536,18 @@ pub fn push_content_to_ref(
         // Update or create the ref (no force — CAS semantics).
         let ref_result = if parent_sha.is_some() {
             gh_api_json(
-                &owner, &repo, "PATCH",
+                &owner,
+                &repo,
+                "PATCH",
                 &format!("git/refs/{api_ref}"),
                 &serde_json::json!({"sha": commit_sha}),
                 repo_root,
             )
         } else {
             gh_api_json(
-                &owner, &repo, "POST",
+                &owner,
+                &repo,
+                "POST",
                 "git/refs",
                 &serde_json::json!({"ref": ref_name, "sha": commit_sha}),
                 repo_root,
@@ -532,7 +558,8 @@ pub fn push_content_to_ref(
             Ok(_) => return Ok(()),
             Err(e) => {
                 let msg = e.to_string();
-                let is_conflict = msg.contains("422") || msg.contains("not a fast forward")
+                let is_conflict = msg.contains("422")
+                    || msg.contains("not a fast forward")
                     || msg.contains("non-fast-forward");
                 if is_conflict && attempt < MAX_RETRIES - 1 {
                     // Exponential backoff capped at 5s: 200ms, 400ms, 800ms … 5000ms
@@ -559,7 +586,7 @@ pub fn fetch_ref_content_via_api(
     use std::process::{Command, Stdio};
 
     let (owner, repo) = get_github_nwo(repo_root)?;
-    let api_ref = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
+    let api_ref = api_ref_path(ref_name);
 
     // Get ref → commit SHA
     let ref_out = Command::new("gh")
@@ -571,8 +598,8 @@ pub fn fetch_ref_content_via_api(
     if !ref_out.status.success() {
         return Ok(None); // ref doesn't exist
     }
-    let ref_json: serde_json::Value = serde_json::from_slice(&ref_out.stdout)
-        .unwrap_or(serde_json::Value::Null);
+    let ref_json: serde_json::Value =
+        serde_json::from_slice(&ref_out.stdout).unwrap_or(serde_json::Value::Null);
     let commit_sha = match ref_json["object"]["sha"].as_str() {
         Some(s) => s.to_string(),
         None => return Ok(None),
@@ -580,7 +607,10 @@ pub fn fetch_ref_content_via_api(
 
     // Get commit → tree SHA
     let commit_out = Command::new("gh")
-        .args(["api", &format!("/repos/{owner}/{repo}/git/commits/{commit_sha}")])
+        .args([
+            "api",
+            &format!("/repos/{owner}/{repo}/git/commits/{commit_sha}"),
+        ])
         .current_dir(repo_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -588,8 +618,8 @@ pub fn fetch_ref_content_via_api(
     if !commit_out.status.success() {
         return Ok(None);
     }
-    let commit_json: serde_json::Value = serde_json::from_slice(&commit_out.stdout)
-        .unwrap_or(serde_json::Value::Null);
+    let commit_json: serde_json::Value =
+        serde_json::from_slice(&commit_out.stdout).unwrap_or(serde_json::Value::Null);
     let tree_sha = match commit_json["tree"]["sha"].as_str() {
         Some(s) => s.to_string(),
         None => return Ok(None),
@@ -597,7 +627,10 @@ pub fn fetch_ref_content_via_api(
 
     // Get tree → blob SHA for the file
     let tree_out = Command::new("gh")
-        .args(["api", &format!("/repos/{owner}/{repo}/git/trees/{tree_sha}")])
+        .args([
+            "api",
+            &format!("/repos/{owner}/{repo}/git/trees/{tree_sha}"),
+        ])
         .current_dir(repo_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -605,16 +638,14 @@ pub fn fetch_ref_content_via_api(
     if !tree_out.status.success() {
         return Ok(None);
     }
-    let tree_json: serde_json::Value = serde_json::from_slice(&tree_out.stdout)
-        .unwrap_or(serde_json::Value::Null);
-    let blob_sha = tree_json["tree"]
-        .as_array()
-        .and_then(|arr| {
-            arr.iter()
-                .find(|e| e["path"].as_str() == Some(filename))
-                .and_then(|e| e["sha"].as_str())
-                .map(String::from)
-        });
+    let tree_json: serde_json::Value =
+        serde_json::from_slice(&tree_out.stdout).unwrap_or(serde_json::Value::Null);
+    let blob_sha = tree_json["tree"].as_array().and_then(|arr| {
+        arr.iter()
+            .find(|e| e["path"].as_str() == Some(filename))
+            .and_then(|e| e["sha"].as_str())
+            .map(String::from)
+    });
     let blob_sha = match blob_sha {
         Some(s) => s,
         None => return Ok(None),
@@ -622,7 +653,10 @@ pub fn fetch_ref_content_via_api(
 
     // Get blob content (base64 decoded)
     let blob_out = Command::new("gh")
-        .args(["api", &format!("/repos/{owner}/{repo}/git/blobs/{blob_sha}")])
+        .args([
+            "api",
+            &format!("/repos/{owner}/{repo}/git/blobs/{blob_sha}"),
+        ])
         .current_dir(repo_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -630,8 +664,8 @@ pub fn fetch_ref_content_via_api(
     if !blob_out.status.success() {
         return Ok(None);
     }
-    let blob_json: serde_json::Value = serde_json::from_slice(&blob_out.stdout)
-        .unwrap_or(serde_json::Value::Null);
+    let blob_json: serde_json::Value =
+        serde_json::from_slice(&blob_out.stdout).unwrap_or(serde_json::Value::Null);
     let encoded = match blob_json["content"].as_str() {
         Some(s) => s.replace('\n', ""), // GitHub wraps at 60 chars
         None => return Ok(None),
@@ -648,7 +682,7 @@ pub fn delete_remote_ref(repo_root: &Path, ref_name: &str) -> Result<()> {
     use std::process::{Command, Stdio};
 
     let (owner, repo) = get_github_nwo(repo_root)?;
-    let api_ref = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
+    let api_ref = api_ref_path(ref_name);
     let api_path = format!("/repos/{owner}/{repo}/git/refs/{api_ref}");
 
     let out = Command::new("gh")
@@ -671,10 +705,7 @@ pub fn delete_remote_ref(repo_root: &Path, ref_name: &str) -> Result<()> {
 /// Convert a branch name to a per-branch ref path.
 /// e.g. "feature/auth" → "refs/agentdiff/traces/feature--auth"
 pub fn branch_ref_name(branch: &str) -> String {
-    format!(
-        "refs/agentdiff/traces/{}",
-        sanitize_branch_name(branch)
-    )
+    format!("refs/agentdiff/traces/{}", sanitize_branch_name(branch))
 }
 
 /// Sanitize branch name for use in ref paths and local file names.
@@ -755,6 +786,27 @@ pub fn traces_to_jsonl(traces: &[AgentTrace]) -> Result<String> {
         out.push('\n');
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_ref_path_escapes_literal_percent_encoded_branch_slash() {
+        assert_eq!(
+            api_ref_path("refs/agentdiff/traces/codex%2Fmisc"),
+            "agentdiff/traces/codex%252Fmisc"
+        );
+    }
+
+    #[test]
+    fn api_ref_path_keeps_real_ref_path_slashes() {
+        assert_eq!(
+            api_ref_path("refs/heads/feature/example"),
+            "heads/feature/example"
+        );
+    }
 }
 
 fn load_session_from(path: &Path, out: &mut Vec<Entry>, committed: bool) -> Result<()> {

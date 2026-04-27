@@ -74,7 +74,10 @@ git add . && git commit -m "feat: add feature"
 # 5. Inspect attribution
 agentdiff list
 agentdiff blame src/main.rs
-agentdiff stats
+agentdiff report --by-file --by-model
+
+# 6. Give local agents context before editing traced files
+agentdiff context src/main.rs --json
 ```
 
 That's it. From here every commit is attributed to whichever agent (or human) wrote it.
@@ -92,9 +95,11 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 | `agentdiff install-ci` | Write CI workflow YAMLs to `.github/workflows/` — run once per repo |
 | `agentdiff list` | List attribution entries |
 | `agentdiff blame <file>` | Line-level attribution, like `git blame` |
+| `agentdiff context <file>` | File-scoped trace context: intent, prompt excerpt, files read, flags, trust |
 | `agentdiff diff [<sha>]` | Attribution diff for a commit or range |
 | `agentdiff show <sha>` | Full details for one trace entry |
 | `agentdiff report` | Aggregate report (text, markdown, annotations, JSONL) |
+| `agentdiff install-skill` | Install the AgentDiff context skill into a project or globally |
 | `agentdiff status` | Health check — hooks, keys, traces |
 | `agentdiff status --remote` | Show remote trace ref state (`refs/agentdiff/*` on origin) |
 | `agentdiff push` | Push local traces to per-branch ref on origin |
@@ -117,6 +122,10 @@ agentdiff list --limit 50
 # Blame for a specific agent only
 agentdiff blame src/api.rs --agent claude-code
 
+# Show why a file was changed and what context the agent used
+agentdiff context src/api.rs
+agentdiff context src/api.rs --json
+
 # Report broken down by file and model
 agentdiff report --by-file --by-model
 
@@ -127,9 +136,17 @@ agentdiff report --since 2026-01-01T00:00:00Z
 agentdiff report --format markdown --out report.md
 agentdiff report --format annotations --out annotations.json
 
+# Include intent, files read, flags, trust, and trace IDs in reports
+agentdiff report --format markdown --context
+agentdiff report --format json --context
+
 # Post report as a PR comment (auto-detects PR from current branch)
 agentdiff report --format markdown --post-pr-comment
 agentdiff report --format markdown --post-pr-comment 42   # explicit PR number
+
+# Install the local agent guidance skill into this repo
+agentdiff install-skill --scope project
+agentdiff install-skill --scope global   # optional personal default
 
 # Attribution diff for last 3 commits
 agentdiff diff HEAD~3
@@ -219,10 +236,12 @@ agentdiff list --uncommitted
 </details>
 
 <details>
-<summary>agentdiff stats</summary>
+<summary>agentdiff report --by-file --by-model</summary>
 
 ```
-  agentdiff stats — 4,231 lines tracked
+  agentdiff report
+
+  Total lines tracked: 4,231
 
   By Agent:
     claude-code   2,741 (65%) ████████████████████
@@ -236,6 +255,29 @@ agentdiff list --uncommitted
     o4-mini               892 (21%)
     cursor-fast           148  (3%)
     —                     168  (4%)
+```
+
+</details>
+
+<details>
+<summary>agentdiff context src/api.rs --json</summary>
+
+```json
+{
+  "file": "src/api.rs",
+  "traces": [
+    {
+      "short_id": "60eb15b8",
+      "agent": "cursor",
+      "intent": "security hardening",
+      "prompt_excerpt": "add rate limiting to the API",
+      "files_read": ["src/api.rs", "src/config.rs"],
+      "flags": ["security"],
+      "trust": 92,
+      "ranges": [{ "start_line": 17, "end_line": 24 }]
+    }
+  ]
+}
 ```
 
 </details>
@@ -287,23 +329,32 @@ agentdiff list --uncommitted
 </details>
 
 <details>
-<summary>agentdiff report (Markdown)</summary>
+<summary>agentdiff report --format markdown --context</summary>
 
 ```markdown
-## AI Attribution Report
+# AgentDiff Report
 
-**Total lines tracked:** 4,231 across 47 commits
+## Summary
 
-| Agent | Lines | Share |
-|-------|-------|-------|
+| Agent | Lines | % |
+|-------|-------|---|
 | claude-code | 2,741 | 65% |
 | cursor | 973 | 23% |
-| copilot | 353 | 8% |
 | human | 164 | 4% |
 
-### Recent AI commits
-- `a1b2c3d` claude-code — "add auth middleware" → src/auth.rs (17-24)
-- `b2c3d4e` cursor — "refactor utils" → src/utils.rs (1-89)
+## Review Context
+
+- Intent: security hardening (17 lines, 1 file)
+  - Agent/model: claude-code / claude-sonnet-4-6
+  - Files read: src/api.rs, src/config.rs
+  - Prompt: add rate limiting to the API
+  - Flags: security
+
+## Files To Review First
+
+| File | Lines | Dominant Agent | Intent | Context |
+|------|-------|----------------|--------|---------|
+| src/api.rs | 17 | claude-code | security hardening | trace 550e8400 |
 ```
 
 </details>
@@ -352,7 +403,7 @@ When an AI agent makes an edit, its hook fires and writes a JSON entry to `<repo
 
 On `git commit`:
 - Pre-commit hook: matches session entries against staged diff → writes `pending-ledger.json`
-- Post-commit hook: finalizes one trace entry (UUID-keyed, Agent Trace v0.1 format) into the local buffer at `.git/agentdiff/traces/{branch}.jsonl`; signs it with ed25519 if keys are configured
+- Post-commit hook: finalizes one trace entry (UUID-keyed, Agent Trace v0.1 format) into the local buffer at `.git/agentdiff/traces/{branch}.jsonl`; attaches structured context such as `intent`, `files_read`, `flags`, and `trust`; signs it with ed25519 if keys are configured
 
 On `git push`:
 - Pre-push hook: uploads the local trace buffer to `refs/agentdiff/traces/{branch}` on origin via the GitHub Git Database API; auto-consolidates on direct pushes to main/master
@@ -398,6 +449,28 @@ Signing keys are registered per-developer in `refs/agentdiff/keys/{key_id}:pub.k
 ```
 
 </details>
+
+---
+
+## Agent Context Workflow
+
+agentdiff can preserve lightweight intent and files-read context so reviewers and local agents can understand why a change was made, not just which lines were attributed.
+
+```bash
+# Before editing a traced file, inspect its local context
+agentdiff context src/api.rs --json
+
+# Before PR review or summaries, generate a context-aware report
+agentdiff report --format markdown --context
+agentdiff report --format json --context
+
+# Install project-local guidance so Cursor agents learn this workflow
+agentdiff install-skill --scope project
+```
+
+`agentdiff install-skill --scope project` writes `.cursor/skills/agentdiff-context/SKILL.md` in the current repo. Use `--scope global` for a personal default, and `--force` to overwrite an existing skill file.
+
+When used with `--post-pr-comment`, context reports are filtered to commits on the current PR branch and update the existing AgentDiff comment when possible.
 
 ---
 
@@ -538,6 +611,7 @@ agentdiff config show
 Each AI-assisted edit generates a trace entry containing:
 - Agent name and model (e.g., `claude-code`, `claude-sonnet-4-6`)
 - A short prompt excerpt (the first ~100 characters of your request to the AI)
+- Optional structured context from MCP or `record-context.py`: intent, files read, flags, and trust score
 - File paths and line ranges affected
 - Timestamp and session ID
 

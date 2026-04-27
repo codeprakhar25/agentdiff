@@ -30,6 +30,9 @@ pub enum Command {
     /// Show line-level attribution for a file (like git-blame)
     Blame(BlameArgs),
 
+    /// Show agent context for a file
+    Context(ContextArgs),
+
     /// Aggregate report in text, markdown, annotations, or JSONL format
     Report(ReportArgs),
 
@@ -62,6 +65,9 @@ pub enum Command {
 
     /// Write agentdiff CI workflow files to .github/workflows/
     InstallCi(InstallCiArgs),
+
+    /// Install the AgentDiff context skill for Cursor agents
+    InstallSkill(InstallSkillArgs),
 
     /// [internal] Sign the last trace entry — called by the post-commit hook
     #[command(hide = true)]
@@ -159,8 +165,26 @@ pub struct BlameArgs {
 }
 
 #[derive(Args, Debug)]
+pub struct ContextArgs {
+    /// File to explain (relative to repo root)
+    pub file: std::path::PathBuf,
+
+    /// Output machine-readable JSON
+    #[arg(long)]
+    pub json: bool,
+
+    /// Only include traces whose agent name contains this substring
+    #[arg(long)]
+    pub agent: Option<String>,
+
+    /// Limit number of trace records shown
+    #[arg(short = 'n', long, default_value_t = 10)]
+    pub limit: usize,
+}
+
+#[derive(Args, Debug)]
 pub struct ReportArgs {
-    /// Output format: text (default, terminal-friendly) | markdown | annotations | jsonl
+    /// Output format: text (default, terminal-friendly) | markdown | annotations | jsonl | json
     #[arg(long, default_value = "text")]
     pub format: ReportFormat,
 
@@ -184,6 +208,10 @@ pub struct ReportArgs {
     /// Only include entries whose model name contains this substring
     #[arg(long)]
     pub model: Option<String>,
+
+    /// Include structured intent/files-read context in markdown reports (JSON is always structured)
+    #[arg(long)]
+    pub context: bool,
 
     /// With --format=text: also show per-file breakdown
     #[arg(long)]
@@ -258,6 +286,8 @@ pub enum ReportFormat {
     Annotations,
     /// Agent Trace JSONL (replaces `export`)
     Jsonl,
+    /// Structured JSON summary
+    Json,
 }
 
 // ── Keys ─────────────────────────────────────────────────────────────────────
@@ -331,3 +361,19 @@ pub struct InstallCiArgs {
     pub force: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct InstallSkillArgs {
+    /// Where to install the skill: project writes .cursor/skills, global writes ~/.agents/skills
+    #[arg(long, default_value = "project")]
+    pub scope: SkillScope,
+
+    /// Overwrite an existing skill file
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, clap::ValueEnum, PartialEq, Eq)]
+pub enum SkillScope {
+    Project,
+    Global,
+}

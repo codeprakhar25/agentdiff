@@ -12,6 +12,7 @@ If stdin contains JSON object, it is used as payload and CLI flags override fiel
 import argparse
 import json
 import os
+import select
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -42,6 +43,18 @@ def parse_json_array(raw: str):
     return []
 
 
+def read_available_stdin() -> str:
+    if sys.stdin.isatty():
+        return ""
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0)
+    except Exception:
+        return ""
+    if not ready:
+        return ""
+    return sys.stdin.read()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True)
     parser.add_argument("--cwd", default=os.getcwd())
@@ -56,7 +69,7 @@ def main() -> int:
     args = parser.parse_args()
 
     payload = {}
-    stdin = sys.stdin.read()
+    stdin = read_available_stdin()
     if stdin.strip():
         try:
             obj = json.loads(stdin)

@@ -1,8 +1,10 @@
 pub mod blame;
 pub mod config_cmd;
 pub mod consolidate;
-pub mod install_ci;
+pub mod context;
 pub mod diff;
+pub mod install_ci;
+pub mod install_skill;
 pub mod keys;
 pub mod list;
 pub mod policy;

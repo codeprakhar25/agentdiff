@@ -156,6 +156,14 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> Optio
         metadata["flags"] = pending["flags"]
     if pending.get("session_id"):
         metadata["session_id"] = str(pending["session_id"])
+    if pending.get("intent"):
+        metadata["intent"] = str(pending["intent"])
+    if isinstance(pending.get("files_read"), list) and pending["files_read"]:
+        metadata["files_read"] = [str(p) for p in pending["files_read"]]
+    if git_author:
+        metadata["author"] = git_author
+    if pending.get("tool"):
+        metadata["capture_tool"] = str(pending["tool"])
 
     trace: dict = {
         "version": "0.1.0",

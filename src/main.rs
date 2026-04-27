@@ -26,7 +26,11 @@ fn main() -> anyhow::Result<()> {
     // Commands that don't require a git repository.
     let no_repo_needed = matches!(
         &cli.command,
-        Command::Config(_) | Command::Configure(_) | Command::Keys(_) | Command::InstallCi(_)
+        Command::Config(_)
+            | Command::Configure(_)
+            | Command::Keys(_)
+            | Command::InstallCi(_)
+            | Command::InstallSkill(_)
     );
 
     // Resolve repo root
@@ -70,6 +74,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::List(args) => commands::list::run(&store, &args),
         Command::Blame(args) => commands::blame::run(&store, &args),
+        Command::Context(args) => commands::context::run(&store, &args),
         Command::Report(args) => commands::report::run(&store, &args),
         Command::Diff(args) => commands::diff::run(&store, &args),
         Command::Show(args) => commands::show::run(&store, &args),
@@ -85,6 +90,7 @@ fn main() -> anyhow::Result<()> {
         Command::Push(args) => commands::push::run(&store, &args),
         Command::Consolidate(args) => commands::consolidate::run(&store, &args),
         Command::InstallCi(args) => commands::install_ci::run(&repo_root, &args),
+        Command::InstallSkill(args) => commands::install_skill::run(&repo_root, &args),
         Command::SignEntry => commands::sign_entry::run(&store),
     }
 }

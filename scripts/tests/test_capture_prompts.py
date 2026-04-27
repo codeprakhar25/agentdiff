@@ -4,7 +4,9 @@ Tests for the capture_prompts_enabled() / _capture_prompts_enabled() config gate
 Covers both capture-claude.py (capture side) and finalize-ledger.py (trace side).
 """
 import importlib.util
+import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -160,6 +162,51 @@ class FinalizeCapturePropmptsEnabledTests(unittest.TestCase):
             finally:
                 if original is not None:
                     os.environ["HOME"] = original
+
+    def test_write_agent_trace_persists_structured_context_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+            (repo / "README.md").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+            pending = {
+                "agent": "cursor",
+                "git_author": "Prakhar",
+                "model": "cursor-test",
+                "session_id": "sess-1",
+                "lines": {"src/app.py": [[1, 2]]},
+                "prompt_excerpt": "add route guard",
+                "prompt_hash": "abc123",
+                "intent": "security hardening",
+                "files_read": ["src/auth.py", "src/config.py"],
+                "trust": 91,
+                "flags": ["security"],
+                "tool": "afterFileEdit",
+            }
+
+            original = os.environ.get("HOME")
+            try:
+                os.environ["HOME"] = tmp
+                traces_path = self.mod.write_agent_trace(
+                    str(repo), pending, "deadbeef", "2026-04-27T00:00:00Z"
+                )
+            finally:
+                if original is not None:
+                    os.environ["HOME"] = original
+
+            self.assertIsNotNone(traces_path)
+            raw = Path(traces_path).read_text(encoding="utf-8").strip()
+            trace = json.loads(raw)
+            metadata = trace["metadata"]["agentdiff"]
+            self.assertEqual(metadata["intent"], "security hardening")
+            self.assertEqual(metadata["files_read"], ["src/auth.py", "src/config.py"])
+            self.assertEqual(metadata["author"], "Prakhar")
+            self.assertEqual(metadata["capture_tool"], "afterFileEdit")
 
 
 if __name__ == "__main__":

@@ -149,11 +149,13 @@ fn find_merge_base(repo_root: &Path) -> Option<String> {
     }
 
     for branch in candidates {
-        let out = std::process::Command::new("git")
+        let Ok(out) = std::process::Command::new("git")
             .args(["merge-base", "HEAD", &branch])
             .current_dir(repo_root)
             .output()
-            .ok()?;
+        else {
+            continue;
+        };
         if out.status.success() {
             let sha = String::from_utf8(out.stdout).ok()?.trim().to_string();
             if !sha.is_empty() {

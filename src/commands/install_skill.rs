@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use std::path::{Path, PathBuf};
 
-const SKILL_CONTENT: &str = include_str!("../../.cursor/skills/agentdiff-context/SKILL.md");
+const SKILL_CONTENT: &str = include_str!("../../templates/skills/agentdiff-context/SKILL.md");
 const SKILL_REL_PATH: &[&str] = &["agentdiff-context", "SKILL.md"];
 
 pub fn run(repo_root: &Path, args: &InstallSkillArgs) -> Result<()> {

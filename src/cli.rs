@@ -209,7 +209,7 @@ pub struct ReportArgs {
     #[arg(long)]
     pub model: Option<String>,
 
-    /// Include structured intent/files-read context in markdown or JSON reports
+    /// Include structured intent/files-read context in markdown reports (JSON is always structured)
     #[arg(long)]
     pub context: bool,
 

@@ -21,8 +21,11 @@ jobs:
           git fetch origin '+refs/agentdiff/*:refs/agentdiff/*' || true
 
       - name: Check out PR head branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git checkout -B "${{ github.head_ref }}" "${{ github.event.pull_request.head.sha }}"
+          git checkout -B "$HEAD_REF" "$HEAD_SHA"
 
       - name: Install agentdiff
         run: |

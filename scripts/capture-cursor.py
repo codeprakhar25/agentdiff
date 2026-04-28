@@ -243,15 +243,29 @@ def _cursor_transcript_candidates(conversation_id: str, repo_root: str) -> list:
 
     candidates = []
 
-    # Windows-side cursor projects dir (WSL2 host)
+    # Windows-side cursor projects dir (WSL2 host).
+    # Use the Linux username to find the matching Windows user directory — this is
+    # reliable on personal machines and avoids reading a different user's transcripts
+    # on shared Windows boxes (Administrator, Default, etc. would appear first if we
+    # just sorted alphabetically).
     win_projects = None
     try:
         win_users = "/mnt/c/Users"
-        for entry in sorted(os.scandir(win_users), key=lambda e: e.name):
-            p = os.path.join(entry.path, ".cursor", "projects")
-            if os.path.isdir(p):
-                win_projects = p
-                break
+        linux_user = os.environ.get("USER", "")
+        # Prefer exact username match; fall back to first dir that has .cursor/projects.
+        candidates_win = []
+        if linux_user:
+            exact = os.path.join(win_users, linux_user, ".cursor", "projects")
+            if os.path.isdir(exact):
+                candidates_win.append(exact)
+        if not candidates_win:
+            for entry in sorted(os.scandir(win_users), key=lambda e: e.name):
+                p = os.path.join(entry.path, ".cursor", "projects")
+                if os.path.isdir(p):
+                    candidates_win.append(p)
+                    break
+        if candidates_win:
+            win_projects = candidates_win[0]
     except Exception:
         pass
 

@@ -132,6 +132,18 @@ def normalize_path(path: str, cwd: str = "") -> str:
 
     p = p.replace("\\", "/")
     p = re.sub(r"/{2,}", "/", p)
+
+    # Strip Windows WSL UNC prefix: /wsl.localhost/<distro>/... or /wsl$/<distro>/...
+    # These arrive after \\ → / conversion above.
+    wsl_match = re.match(r"^/wsl(?:\.localhost|[$])/[^/]+(/.+)", p, re.IGNORECASE)
+    if wsl_match:
+        p = wsl_match.group(1)
+
+    # Convert Windows drive letter paths: C:/... → /mnt/c/...
+    drive_match = re.match(r"^([A-Za-z]):/(.*)", p)
+    if drive_match:
+        p = f"/mnt/{drive_match.group(1).lower()}/{drive_match.group(2)}"
+
     p = os.path.expanduser(p)
 
     if os.path.isabs(p):
@@ -203,20 +215,84 @@ def _cursor_project_slug(repo_root: str) -> str:
     return repo_root.lstrip("/").replace("/", "-")
 
 
+def _wsl_distro_name() -> str:
+    """Return the WSL distro name (e.g. 'Ubuntu'), or empty string if not in WSL."""
+    name = os.environ.get("WSL_DISTRO_NAME", "")
+    if name:
+        return name
+    try:
+        with open("/proc/version") as f:
+            if "microsoft" in f.read().lower():
+                pass  # fall through to os-release
+    except Exception:
+        return ""
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("NAME="):
+                    return line.split("=", 1)[1].strip().strip('"').replace(" ", "-")
+    except Exception:
+        pass
+    return "Ubuntu"
+
+
+def _cursor_transcript_candidates(conversation_id: str, repo_root: str) -> list:
+    """Return candidate transcript paths to try, most-specific first."""
+    linux_slug = _cursor_project_slug(repo_root)
+    path_suffix = linux_slug  # e.g. home-prakh-agentdiff
+
+    candidates = []
+
+    # Windows-side cursor projects dir (WSL2 host)
+    win_projects = None
+    try:
+        win_users = "/mnt/c/Users"
+        for entry in sorted(os.scandir(win_users), key=lambda e: e.name):
+            p = os.path.join(entry.path, ".cursor", "projects")
+            if os.path.isdir(p):
+                win_projects = p
+                break
+    except Exception:
+        pass
+
+    # Linux-side cursor projects dir
+    linux_projects = os.path.expanduser("~/.cursor/projects")
+
+    for projects_dir in filter(None, [win_projects, linux_projects if os.path.isdir(linux_projects) else None]):
+        # Search for a slug ending in the right path suffix (handles wsl-localhost-Ubuntu-... prefix)
+        try:
+            for slug in os.listdir(projects_dir):
+                if slug == linux_slug or slug.lower().endswith("-" + path_suffix.lower()):
+                    t = os.path.join(projects_dir, slug, "agent-transcripts",
+                                     conversation_id, f"{conversation_id}.jsonl")
+                    if os.path.exists(t):
+                        candidates.append(t)
+        except Exception:
+            pass
+
+    # Fallback: original linux-side path
+    distro = _wsl_distro_name()
+    for slug in ([f"wsl-localhost-{distro}-{path_suffix}", linux_slug] if distro else [linux_slug]):
+        t = os.path.expanduser(
+            f"~/.cursor/projects/{slug}/agent-transcripts/{conversation_id}/{conversation_id}.jsonl"
+        )
+        if t not in candidates:
+            candidates.append(t)
+
+    return candidates
+
+
 def get_prompt_from_transcript(conversation_id: str, repo_root: str) -> str:
     """Read the user's prompt from Cursor's agent-transcript JSONL.
 
-    Files live at:
-      ~/.cursor/projects/{slug}/agent-transcripts/{conv_id}/{conv_id}.jsonl
-
-    We read the first user message and extract its text content.
+    Searches both the Linux-side and Windows-side cursor project dirs, and
+    tries multiple slug patterns (bare Linux slug + WSL UNC slug) so it works
+    regardless of how the workspace was opened.
     """
-    slug = _cursor_project_slug(repo_root)
-    transcript_path = os.path.expanduser(
-        f"~/.cursor/projects/{slug}/agent-transcripts/{conversation_id}/{conversation_id}.jsonl"
-    )
-    if not os.path.exists(transcript_path):
-        debug_log(f"transcript not found: {transcript_path}")
+    transcript_paths = _cursor_transcript_candidates(conversation_id, repo_root)
+    transcript_path = next((p for p in transcript_paths if os.path.exists(p)), None)
+    if not transcript_path:
+        debug_log(f"transcript not found for conv={conversation_id} candidates={transcript_paths[:3]}")
         return ""
     try:
         with open(transcript_path, encoding="utf-8", errors="replace") as f:

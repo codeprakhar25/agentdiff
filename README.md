@@ -25,7 +25,7 @@ agentdiff list
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   1    a1b2c3d4   Apr 14 09:12  claude-code    claude-sonnet-4-6      src/commands/push.rs             1-47               92       "fix ordering: write local ref before…"
   2    b2c3d4e5   Apr 14 09:44  codex          o4-mini                src/store.rs +2                  112-198, 201-230   —        "add fetch_ref_content helper"
-  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add remote-status args struct"
+  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add status --remote args struct"
   4    d4e5f6a7   Apr 13 17:30  opencode       claude-sonnet-4-6      src/main.rs                      80-94              88       "wire remote_status dispatch"
   5    e5f6a7b8   Apr 13 14:22  human          —                      README.md                        —                 —        —
 ```
@@ -35,7 +35,7 @@ agentdiff list
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
 ```
 
 **Requirements:** Python 3.7+ on PATH, Git 2.20+
@@ -45,10 +45,15 @@ curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/inst
 
 ```bash
 # Specific version
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/master/install.sh | bash -s -- --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash -s -- --version v0.1.0
 
 # From source (requires Rust 1.85+)
-cargo install --git https://github.com/codeprakhar25/agentdiff agentdiff
+git clone https://github.com/codeprakhar25/agentdiff.git
+cd agentdiff
+cargo build --release
+mkdir -p ~/.local/bin
+install -m 0755 target/release/agentdiff ~/.local/bin/agentdiff
+install -m 0755 target/release/agentdiff-mcp ~/.local/bin/agentdiff-mcp
 ```
 
 </details>
@@ -210,7 +215,7 @@ agentdiff list
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   1    a1b2c3d4   Apr 14 09:12  claude-code    claude-sonnet-4-6      src/commands/push.rs             1-47               92       "fix ordering: write local ref befor…"
   2    b2c3d4e5   Apr 14 09:44  codex          o4-mini                src/store.rs +2                  112-198, 201-230   —        "add fetch_ref_content helper"
-  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add remote-status args struct"
+  3    c3d4e5f6   Apr 13 18:01  cursor         cursor-fast            src/cli.rs                       305-381            —        "add status --remote args struct"
   4    d4e5f6a7   Apr 13 17:30  opencode       claude-sonnet-4-6      src/main.rs                      80-94              88       "wire remote_status dispatch"
   5    e5f6a7b8   Apr 12 11:04  windsurf       claude-sonnet-4-6      src/init.rs                      44-68              —        "remove legacy .agentdiff dir creat…"
   6    f6a7b8c9   Apr 11 16:22  human          —                      README.md                        —                  —        —
@@ -283,10 +288,10 @@ agentdiff list --uncommitted
 </details>
 
 <details>
-<summary>agentdiff remote-status</summary>
+<summary>agentdiff status --remote</summary>
 
 ```
-  agentdiff remote-status — github.com/org/repo
+  agentdiff status --remote — github.com/org/repo
 
   REF                                           TRACES     LOCAL
   ────────────────────────────────────────────────────────────────────────────

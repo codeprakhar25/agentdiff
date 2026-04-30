@@ -62,7 +62,10 @@ bash scripts/e2e-test.sh
 ### Installing locally for manual testing
 
 ```bash
-cargo install --path . --force
+cargo build --release
+mkdir -p ~/.local/bin
+install -m 0755 target/release/agentdiff ~/.local/bin/agentdiff
+install -m 0755 target/release/agentdiff-mcp ~/.local/bin/agentdiff-mcp
 
 # Run configure + init in a throwaway repo
 agentdiff configure
@@ -210,7 +213,7 @@ chore: bump serde to 1.0.200
 
 ## Pull Request Process
 
-1. **Fork** the repo and branch from `master`:
+1. **Fork** the repo and branch from `main`:
    ```bash
    git checkout -b feat/my-agent-support
    ```
@@ -222,6 +225,7 @@ chore: bump serde to 1.0.200
    cargo build
    cargo test
    python3 -m unittest discover -s scripts/tests
+   python3 scripts/mcp-smoke-test.py
    bash scripts/e2e-test.sh
    ```
 

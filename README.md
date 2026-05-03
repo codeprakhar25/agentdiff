@@ -17,6 +17,8 @@
 
 agentdiff hooks into every major AI coding agent — Claude Code, Cursor, Codex, Copilot, Windsurf, OpenCode, Gemini — and writes a permanent, commit-scoped attribution record to your repository. Each record captures the agent name, model, prompt excerpt, and exact line ranges. All of it queryable from the CLI, no server required.
 
+[Watch the launch demo](https://x.com/PrakharKhatri3/status/2049703391488888903) to see the attribution workflow end-to-end.
+
 ```
 agentdiff list
 

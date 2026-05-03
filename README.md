@@ -6,6 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/codeprakhar25/agentdiff/releases"><img src="https://img.shields.io/github/v/release/codeprakhar25/agentdiff?style=flat-square" alt="Latest release"></a>
+  <a href="https://github.com/codeprakhar25/agentdiff/stargazers"><img src="https://img.shields.io/github/stars/codeprakhar25/agentdiff?style=flat-square" alt="GitHub stars"></a>
   <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-blue?style=flat-square" alt="License"></a>
   <a href="https://github.com/codeprakhar25/agentdiff/actions"><img src="https://img.shields.io/github/actions/workflow/status/codeprakhar25/agentdiff/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <img src="https://img.shields.io/badge/agents-7%2B-blueviolet?style=flat-square" alt="Agents supported">

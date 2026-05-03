@@ -176,6 +176,12 @@ agentdiff consolidate --branch feature/my-branch --push
 # Write CI workflows to .github/workflows/ (run once per repo)
 agentdiff install-ci
 
+# Configure all supported agents directly, including Gemini/Antigravity
+agentdiff configure --all
+
+# Configure only selected agents without the interactive picker
+agentdiff configure --agents cursor,codex,opencode
+
 # Skip specific agents during configure
 agentdiff configure --no-copilot --no-antigravity
 
@@ -203,7 +209,7 @@ agentdiff status --remote --no-fetch   # fast: show refs + SHAs only, skip trace
 | **Codex CLI** | `notify` hook (`~/.codex/config.toml`) | Task-level file changes |
 | **Gemini / Antigravity** | `BeforeTool`/`AfterTool` hooks (`~/.gemini/settings.json`) | `write_file`, `replace` |
 
-Agent hooks for Claude, Cursor, Codex, Windsurf, OpenCode, and Gemini are all installed **globally once** via `agentdiff configure`. However, capture only fires in repos where `agentdiff init` has been run — the `.git/agentdiff/` directory must exist for any data to be written.
+Agent hooks are installed **globally once** via `agentdiff configure`. In an interactive terminal, AgentDiff detects available agent configs and lets you choose integrations with Space + Enter. By default it selects the main coding agents and leaves Gemini/Antigravity optional; use `agentdiff configure --all` to install every supported integration directly. Capture only fires in repos where `agentdiff init` has been run — the `.git/agentdiff/` directory must exist for any data to be written.
 
 ---
 
@@ -376,7 +382,7 @@ agentdiff list --uncommitted
 
 **1. `agentdiff configure` — one-time global setup**
 
-Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks with each agent:
+Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks with selected agents. In an interactive terminal, AgentDiff shows a Space/Enter multi-select picker; in scripts, use `--all` or `--agents cursor,codex` to avoid prompting.
 
 - Claude Code → `~/.claude/settings.json` (PostToolUse)
 - Cursor → `~/.cursor/hooks.json` (afterFileEdit, afterTabFileEdit)

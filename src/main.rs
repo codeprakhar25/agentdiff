@@ -56,17 +56,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Configure(args) => {
             let mut cfg = config;
-            configure::run_configure(
-                &mut cfg,
-                args.no_claude,
-                args.no_cursor,
-                args.no_codex,
-                args.no_antigravity,
-                args.no_windsurf,
-                args.no_opencode,
-                args.no_copilot,
-                args.no_mcp,
-            )
+            configure::run_configure(&mut cfg, &args)
         }
         Command::Init(args) => {
             let mut cfg = config;

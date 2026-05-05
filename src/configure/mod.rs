@@ -12,7 +12,7 @@ use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, MultiSelect};
-use std::{fs, io::IsTerminal, process::Command};
+use std::{fs, io::IsTerminal, path::Path, process::Command};
 
 // Script sources embedded at compile time.
 const CLAUDE_CAPTURE_SCRIPT: &str = include_str!("../../scripts/capture-claude.py");
@@ -352,14 +352,7 @@ fn detect_agents() -> Vec<AgentTarget> {
     {
         detected.push(AgentTarget::OpenCode);
     }
-    if [
-        ".vscode/extensions",
-        ".vscode-server/extensions",
-        ".vscode-insiders/extensions",
-    ]
-    .iter()
-    .any(|path| home.join(path).exists())
-    {
+    if copilot_extension_exists(&home) || windows_copilot_extension_exists() {
         detected.push(AgentTarget::Copilot);
     }
     if home.join(".gemini").exists() {
@@ -369,9 +362,51 @@ fn detect_agents() -> Vec<AgentTarget> {
     detected
 }
 
+fn copilot_extension_exists(home: &Path) -> bool {
+    [
+        ".vscode/extensions",
+        ".vscode-server/extensions",
+        ".vscode-insiders/extensions",
+    ]
+    .iter()
+    .any(|path| extension_dir_has_copilot(&home.join(path)))
+}
+
+fn extension_dir_has_copilot(path: &Path) -> bool {
+    fs::read_dir(path)
+        .map(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .starts_with("github.copilot")
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn windows_copilot_extension_exists() -> bool {
+    let users = Path::new("/mnt/c/Users");
+    fs::read_dir(users)
+        .map(|entries| {
+            entries.filter_map(Result::ok).any(|entry| {
+                let home = entry.path();
+                [
+                    ".vscode/extensions",
+                    ".vscode-server/extensions",
+                    ".vscode-insiders/extensions",
+                ]
+                .iter()
+                .any(|path| extension_dir_has_copilot(&home.join(path)))
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn windows_cursor_dir_exists() -> bool {
-    let users = std::path::Path::new("/mnt/c/Users");
-    std::fs::read_dir(users)
+    let users = Path::new("/mnt/c/Users");
+    fs::read_dir(users)
         .map(|entries| {
             entries.filter_map(Result::ok).any(|entry| {
                 let path = entry.path().join(".cursor");
@@ -718,5 +753,20 @@ mod tests {
         args.agents = vec!["cursor".to_string()];
 
         assert!(resolve_agent_selection(&args).is_err());
+    }
+
+    #[test]
+    fn copilot_detection_requires_copilot_extension() {
+        let root =
+            std::env::temp_dir().join(format!("agentdiff-copilot-detect-{}", std::process::id()));
+        let extensions = root.join(".vscode").join("extensions");
+        fs::create_dir_all(extensions.join("rust-lang.rust-analyzer-1.0.0")).unwrap();
+
+        assert!(!copilot_extension_exists(&root));
+
+        fs::create_dir_all(extensions.join("github.copilot-1.2.3")).unwrap();
+        assert!(copilot_extension_exists(&root));
+
+        let _ = fs::remove_dir_all(root);
     }
 }

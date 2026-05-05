@@ -209,7 +209,7 @@ agentdiff status --remote --no-fetch   # fast: show refs + SHAs only, skip trace
 | **Codex CLI** | `notify` hook (`~/.codex/config.toml`) | Task-level file changes |
 | **Gemini / Antigravity** | `BeforeTool`/`AfterTool` hooks (`~/.gemini/settings.json`) | `write_file`, `replace` |
 
-Agent hooks are installed **globally once** via `agentdiff configure`. In an interactive terminal, AgentDiff detects available agent configs and lets you choose integrations with Space + Enter. By default it selects the main coding agents and leaves Gemini/Antigravity optional; use `agentdiff configure --all` to install every supported integration directly. Capture only fires in repos where `agentdiff init` has been run — the `.git/agentdiff/` directory must exist for any data to be written.
+Agent hooks are installed **globally once** via `agentdiff configure`. In an interactive terminal, AgentDiff detects available agent configs and lets you choose integrations with Space + Enter. By default it selects the main coding agents and leaves Gemini/Antigravity optional; use `agentdiff configure --all` to install every supported integration directly. Claude MCP setup is part of the Claude Code integration, so it only runs when Claude is selected; use `--no-mcp` to skip MCP while still configuring Claude. Capture only fires in repos where `agentdiff init` has been run — the `.git/agentdiff/` directory must exist for any data to be written.
 
 ---
 
@@ -382,7 +382,7 @@ agentdiff list --uncommitted
 
 **1. `agentdiff configure` — one-time global setup**
 
-Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks with selected agents. In an interactive terminal, AgentDiff shows a Space/Enter multi-select picker; in scripts, use `--all` or `--agents cursor,codex` to avoid prompting.
+Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks with selected agents. In an interactive terminal, AgentDiff shows a Space/Enter multi-select picker; in scripts, use `--all` or `--agents cursor,codex` to avoid prompting. The Claude MCP server is registered only when Claude Code is selected.
 
 - Claude Code → `~/.claude/settings.json` (PostToolUse)
 - Cursor → `~/.cursor/hooks.json` (afterFileEdit, afterTabFileEdit)

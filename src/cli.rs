@@ -87,6 +87,14 @@ pub struct StatusArgs {
 
 #[derive(Args, Debug)]
 pub struct ConfigureArgs {
+    /// Configure every supported agent without prompting
+    #[arg(long)]
+    pub all: bool,
+
+    /// Configure only these agents (comma-separated: claude-code,cursor,codex,windsurf,opencode,copilot,antigravity)
+    #[arg(long, value_delimiter = ',', value_name = "AGENTS")]
+    pub agents: Vec<String>,
+
     /// Skip Claude Code hook setup
     #[arg(long)]
     pub no_claude: bool,

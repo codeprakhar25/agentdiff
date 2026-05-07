@@ -1,3 +1,4 @@
+mod agents_md;
 mod antigravity;
 mod claude;
 mod codex;
@@ -12,7 +13,7 @@ use crate::util::{dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, MultiSelect};
-use std::{fs, io::IsTerminal, path::Path, process::Command};
+use std::{fs, io::IsTerminal, path::Path, path::PathBuf, process::Command};
 
 // Script sources embedded at compile time.
 const CLAUDE_CAPTURE_SCRIPT: &str = include_str!("../../scripts/capture-claude.py");
@@ -28,7 +29,7 @@ const RECORD_CONTEXT_SCRIPT: &str = include_str!("../../scripts/record-context.p
 const WRITE_NOTE_SCRIPT: &str = include_str!("../../scripts/write-note.py");
 
 /// Configure global agent hooks — run once per machine, no git repo required.
-pub fn run_configure(config: &mut Config, args: &ConfigureArgs) -> Result<()> {
+pub fn run_configure(config: &mut Config, args: &ConfigureArgs, repo_root: &PathBuf) -> Result<()> {
     println!("{}", "agentdiff configure".bold().cyan());
     println!();
     println!(
@@ -84,6 +85,11 @@ pub fn run_configure(config: &mut Config, args: &ConfigureArgs) -> Result<()> {
     // Step 9 — install VS Code Copilot extension
     if selection.copilot {
         copilot::step_configure_copilot(config)?;
+    }
+
+    // Step 10 — write/update AgentDiff section in AGENTS.md (repo root, if available)
+    if !args.no_agents_md {
+        agents_md::step_configure_agents_md(repo_root)?;
     }
 
     // Save updated config
@@ -712,6 +718,7 @@ mod tests {
             no_opencode: false,
             no_copilot: false,
             no_mcp: false,
+            no_agents_md: false,
         }
     }
 

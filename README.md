@@ -203,7 +203,7 @@ agentdiff status --remote --no-fetch   # fast: show refs + SHAs only, skip trace
 |-------|---------------|----------|
 | **Claude Code** | `PostToolUse` hook (`~/.claude/settings.json`) | Edit, Write, MultiEdit |
 | **Cursor** | `afterFileEdit`, `afterTabFileEdit` hooks | Agent edits + Tab completions |
-| **GitHub Copilot** | VS Code extension (`~/.vscode/extensions/`) | Inline completions, chat edits |
+| **GitHub Copilot** | VS Code extension (`~/.vscode/extensions/`) | Large inline insertions, saved AI edits, manual captures |
 | **Windsurf** | `post_write_code` hook (`~/.codeium/windsurf/hooks.json`) | Cascade agent writes |
 | **OpenCode** | `tool.execute.after` plugin (`~/.config/opencode/plugins/`) | All tool writes |
 | **Codex CLI** | `notify` hook (`~/.codex/config.toml`) | Task-level file changes |
@@ -390,7 +390,7 @@ Installs Python capture scripts to `~/.agentdiff/scripts/` and registers hooks w
 - Gemini → `~/.gemini/settings.json` (BeforeTool, AfterTool)
 - Windsurf → `~/.codeium/windsurf/hooks.json` (post_write_code)
 - OpenCode → `~/.config/opencode/plugins/agentdiff.ts` (tool.execute.after)
-- Copilot → VS Code extension in `~/.vscode/extensions/agentdiff-copilot-0.1.0/`
+- Copilot → VS Code extension in `~/.vscode/extensions/agentdiff-copilot-0.1.0/` or the matching VS Code Server extensions directory for WSL/remote workspaces
 
 **2. `agentdiff init` — per-repo setup**
 
@@ -412,6 +412,8 @@ When an AI agent makes an edit, its hook fires and writes a JSON entry to `<repo
   "prompt": "add auth middleware"
 }
 ```
+
+The VS Code Copilot extension also writes structured JSON diagnostics to the `AgentDiff` output channel. Run `AgentDiff: Open Logs` from the VS Code command palette when capture appears inactive or a repository has not been initialized.
 
 **4. Commit → sign → push**
 
@@ -646,6 +648,34 @@ When `capture_prompts = false`, the `prompt` field is omitted from all trace ent
 
 ---
 
+## Editor Event Capture Limits
+
+VS Code does not expose a perfect "this exact range came from Copilot" event to extensions. AgentDiff therefore treats Copilot capture as a conservative heuristic:
+
+**What the VS Code extension can capture:**
+
+- File-backed `onDidChangeTextDocument` events while the GitHub Copilot extension is installed and active.
+- Multi-line insertions, or single-line insertions of at least 50 characters, which filters out most normal typing.
+- The next save of a buffered file, plus document version and timestamps so stale captures are easier to diagnose.
+- Manual full-file captures through `AgentDiff: Capture Copilot edits for current file`, useful after a Copilot Chat edit.
+- The correct repository in multi-root workspaces by resolving the edited document's owning workspace folder and git root.
+- WSL/remote extension hosts installed under VS Code Server paths; Windows-hosted extensions can bridge to WSL capture scripts when configured from WSL.
+
+**What it cannot reliably capture:**
+
+- Rejected Copilot suggestions, hover/chat text that never becomes a file edit, or edits in virtual documents such as git diff views.
+- The exact Copilot prompt, chat transcript, or acceptance source; VS Code does not provide those details to third-party extensions.
+- A guaranteed distinction between Copilot, paste, and another extension when they all produce a large text-document change event.
+- Rewrites in repositories where `agentdiff init` has not created `.git/agentdiff/`; these are logged as skipped captures in the `AgentDiff` output channel.
+
+For local extension development, run:
+
+```bash
+node --test scripts/tests/test_extension.js
+```
+
+---
+
 ## MCP Server
 
 `agentdiff-mcp` is a stdio MCP server for richer context capture. It exposes a `record_context` tool that writes structured metadata before a commit:
@@ -679,14 +709,17 @@ When an agent calls `record_context`, the prompt, model, session ID, files read,
 
 ## Debugging
 
+For Copilot/VS Code capture, open the command palette and run `AgentDiff: Open Logs`. The extension writes structured JSON events there, including activation state, skipped captures, repo initialization failures, git lookup failures, and capture spawn errors.
+
 ```bash
 # Enable verbose logging for all capture scripts
 export AGENTDIFF_DEBUG=1
 
-# Then make an AI edit and commit, then check logs
+# Then make an AI edit and commit, then check file logs
 tail -f ~/.agentdiff/logs/capture-claude.log
 tail -f ~/.agentdiff/logs/capture-cursor.log
 tail -f ~/.agentdiff/logs/capture-codex.log
+tail -f ~/.agentdiff/logs/capture-copilot-ext.log
 
 # Check what was captured before committing
 cat .git/agentdiff/session.jsonl

@@ -124,6 +124,13 @@ pub struct AgentdiffMetadata {
     /// Capture tool (Edit, Write, MultiEdit, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capture_tool: Option<String>,
+    /// Copilot activity summary for this commit window.
+    /// Present only when copilot events were captured alongside this commit.
+    /// Because copilot is excluded from per-file attribution, this field
+    /// surfaces the presence of heuristic copilot captures so that
+    /// `agentdiff list` and `agentdiff report` can warn the user.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copilot_context: Option<serde_json::Value>,
 }
 
 /// ed25519 signature attached to a trace entry after `agentdiff keys init`.

@@ -1,16 +1,15 @@
-name: Consolidate Agent Traces
+name: AgentDiff Policy Check
 
 on:
   pull_request:
-    types: [closed]
 
 permissions:
-  contents: write
+  contents: read
+  checks: write
   pull-requests: write
 
 jobs:
-  consolidate:
-    if: github.event.pull_request.merged == true
+  policy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,18 +20,24 @@ jobs:
         run: |
           git fetch origin '+refs/agentdiff/*:refs/agentdiff/*' || true
 
+      - name: Check out PR head branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout -B "$HEAD_REF" "$HEAD_SHA"
+
       - name: Install agentdiff
         run: |
           curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-      - name: Consolidate traces
+      - name: Check policy
         run: |
-          BRANCH="${{ github.head_ref }}"
-          agentdiff consolidate --branch "$BRANCH" --push
+          agentdiff policy check --format github-annotations
 
       - name: Post attribution comment
-        if: success()
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

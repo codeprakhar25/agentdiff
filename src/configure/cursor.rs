@@ -6,7 +6,10 @@ use std::fs;
 
 pub fn step_configure_cursor(config: &Config) -> Result<()> {
     let capture_script = config.scripts_root().join("capture-cursor.py");
-    let capture_cmd = format!("python3 {}", capture_script.display());
+    // Linux-native Cursor uses plain python3; Windows Cursor (WSL2) must prefix with `wsl`
+    // so the hook runs inside WSL where the Linux path is valid.
+    let linux_cmd = format!("python3 {}", capture_script.display());
+    let wsl_cmd = format!("wsl python3 {}", capture_script.display());
 
     // Cursor on WSL2 is a Windows app — it reads hooks from the Windows-side ~/.cursor/.
     // We write to both locations so native Linux installs and WSL2 are both covered.
@@ -48,8 +51,12 @@ pub fn step_configure_cursor(config: &Config) -> Result<()> {
             continue;
         }
         any_found = true;
+        // Use wsl-prefixed command for Windows-side paths (/mnt/...) so the hook
+        // executes inside WSL where the Linux script path is valid.
+        let is_windows_side = cursor_dir.starts_with("/mnt/");
+        let cmd = if is_windows_side { &wsl_cmd } else { &linux_cmd };
         let hooks_path = cursor_dir.join("hooks.json");
-        configure_cursor_hooks_file(&hooks_path, &capture_cmd)
+        configure_cursor_hooks_file(&hooks_path, cmd)
             .with_context(|| format!("configuring {}", hooks_path.display()))?;
     }
 

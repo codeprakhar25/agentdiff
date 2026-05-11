@@ -53,6 +53,17 @@ fn managed_block() -> String {
 }
 
 pub fn step_configure_agents_md(repo_root: &Path) -> Result<()> {
+    // AGENTS.md is a per-project file. Skip when not inside a git repository
+    // (e.g. `agentdiff configure` run from a home directory for machine-global setup).
+    if !repo_root.join(".git").exists() {
+        println!(
+            "{} AGENTS.md skipped (not a git repository: {})",
+            dim(),
+            repo_root.display()
+        );
+        return Ok(());
+    }
+
     let agents_md_path = repo_root.join("AGENTS.md");
     let block = managed_block();
 
@@ -76,6 +87,15 @@ pub fn step_configure_agents_md(repo_root: &Path) -> Result<()> {
             );
             return Ok(());
         }
+        // Start sentinel present but no end sentinel — file is malformed. Warn and skip
+        // rather than appending a second block and corrupting the file further.
+        eprintln!(
+            "warn: AGENTS.md has an opening agentdiff sentinel but no closing sentinel; \
+             skipping to avoid creating a duplicate block. Fix manually: add \
+             `{}` after the managed section.",
+            AGENTS_MD_END
+        );
+        return Ok(());
     }
 
     // Append block to file (create if absent).
@@ -115,10 +135,16 @@ mod tests {
         dir
     }
 
+    /// Create a fake git repo root (just a `.git` dir) so the git-repo guard passes.
+    fn fake_git_repo(dir: &std::path::Path) {
+        fs::create_dir_all(dir.join(".git")).unwrap();
+    }
+
     #[test]
     fn creates_agents_md_from_scratch() {
         let dir = tmp_dir().join("scratch");
         fs::create_dir_all(&dir).unwrap();
+        fake_git_repo(&dir);
 
         step_configure_agents_md(&dir).unwrap();
 
@@ -135,6 +161,7 @@ mod tests {
     fn idempotent_when_block_unchanged() {
         let dir = tmp_dir().join("idempotent");
         fs::create_dir_all(&dir).unwrap();
+        fake_git_repo(&dir);
 
         step_configure_agents_md(&dir).unwrap();
         let first = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
@@ -150,6 +177,7 @@ mod tests {
     fn updates_existing_block_without_duplicating() {
         let dir = tmp_dir().join("update");
         fs::create_dir_all(&dir).unwrap();
+        fake_git_repo(&dir);
 
         // Write a stale block.
         let stale = format!(
@@ -178,6 +206,7 @@ mod tests {
     fn appends_to_existing_agents_md_without_managed_block() {
         let dir = tmp_dir().join("append");
         fs::create_dir_all(&dir).unwrap();
+        fake_git_repo(&dir);
 
         let pre_existing = "# My Project\n\nSome existing content.\n";
         fs::write(dir.join("AGENTS.md"), pre_existing).unwrap();
@@ -189,6 +218,36 @@ mod tests {
         assert!(content.contains("Some existing content."));
         assert!(content.contains(AGENTS_MD_START));
         assert!(content.contains("## AgentDiff"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn skips_when_not_a_git_repo() {
+        let dir = tmp_dir().join("not-git");
+        fs::create_dir_all(&dir).unwrap();
+        // No .git directory — should skip without error.
+        step_configure_agents_md(&dir).unwrap();
+        assert!(!dir.join("AGENTS.md").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn warns_and_skips_on_unclosed_sentinel() {
+        let dir = tmp_dir().join("malformed");
+        fs::create_dir_all(&dir).unwrap();
+        fake_git_repo(&dir);
+
+        // Write a file with an opening sentinel but no closing sentinel.
+        let malformed = format!("# Project\n\n{start}\n## AgentDiff\n\nTruncated block with no end.\n", start = AGENTS_MD_START);
+        fs::write(dir.join("AGENTS.md"), &malformed).unwrap();
+
+        step_configure_agents_md(&dir).unwrap();
+
+        // File must be unchanged — no duplicate block appended.
+        let content = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert_eq!(content.matches(AGENTS_MD_START).count(), 1, "must not duplicate start sentinel");
+        assert!(!content.contains(AGENTS_MD_END), "end sentinel must not be added silently");
 
         let _ = fs::remove_dir_all(&dir);
     }

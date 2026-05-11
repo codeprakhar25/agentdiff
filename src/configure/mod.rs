@@ -29,7 +29,7 @@ const RECORD_CONTEXT_SCRIPT: &str = include_str!("../../scripts/record-context.p
 const WRITE_NOTE_SCRIPT: &str = include_str!("../../scripts/write-note.py");
 
 /// Configure global agent hooks — run once per machine, no git repo required.
-pub fn run_configure(config: &mut Config, args: &ConfigureArgs, repo_root: &PathBuf) -> Result<()> {
+pub fn run_configure(config: &mut Config, args: &ConfigureArgs, repo_root: &Path) -> Result<()> {
     println!("{}", "agentdiff configure".bold().cyan());
     println!();
     println!(

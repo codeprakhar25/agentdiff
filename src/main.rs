@@ -56,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Configure(args) => {
             let mut cfg = config;
-            configure::run_configure(&mut cfg, &args)
+            configure::run_configure(&mut cfg, &args, &repo_root)
         }
         Command::Init(args) => {
             let mut cfg = config;

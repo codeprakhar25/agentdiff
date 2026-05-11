@@ -92,13 +92,15 @@ That's it. From here every commit is attributed to whichever agent (or human) wr
 
 > **Note:** `agentdiff configure` installs capture scripts globally, but capture only fires in repos where `agentdiff init` has been run (the `.git/agentdiff/` directory must exist). Running `configure` on its own does not track any repo — you must also run `agentdiff init` inside each repo you want to track.
 
+> **AGENTS.md:** `agentdiff configure` also writes (or updates) an `## AgentDiff` section in `AGENTS.md` in the current directory. This file is the emerging standard for multi-agent repo context — Codex, Cursor, Copilot, and other tools read it to understand repo conventions. The section is idempotent: re-running configure updates it without duplicating or touching the rest of your `AGENTS.md`. Use `--no-agents-md` to skip.
+
 ---
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `agentdiff configure` | Install global agent capture hooks — run once per machine |
+| `agentdiff configure` | Install global agent capture hooks and write `AGENTS.md` context — run once per machine |
 | `agentdiff init` | Initialize tracking in current repository (required per repo) |
 | `agentdiff install-ci` | Write CI workflow YAMLs to `.github/workflows/` — run once per repo |
 | `agentdiff list` | List attribution entries |

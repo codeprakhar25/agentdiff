@@ -126,6 +126,10 @@ pub struct ConfigureArgs {
     /// Skip MCP server registration with Claude Code
     #[arg(long)]
     pub no_mcp: bool,
+
+    /// Skip writing/updating the AgentDiff section in AGENTS.md
+    #[arg(long)]
+    pub no_agents_md: bool,
 }
 
 #[derive(Args, Debug)]

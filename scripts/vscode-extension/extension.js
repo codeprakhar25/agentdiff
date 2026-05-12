@@ -19,6 +19,38 @@ const MIN_COPILOT_CHANGE_LEN = 50;
 // Paths that should never be attributed to Copilot (auto-generated metadata).
 const EXCLUDED_PATHS = ['.agentdiff/', '.git/'];
 
+// ── Capture modes ────────────────────────────────────────────────────────────
+//
+// RELIABLE (confidence = "high"):
+//   "manual"       — agentdiff.captureNow command: user explicitly marks the
+//                    current file as Copilot-authored after a Chat session.
+//                    All lines in the file are captured.  This is the only
+//                    mode that produces deterministic, reproducible results.
+//
+// HEURISTIC / UNSUPPORTED (confidence = "low"):
+//   "inline_heuristic" — onDidChangeTextDocument fires on EVERY text change in
+//                    VS Code, including edits from Claude Code running in the
+//                    terminal, Cursor, human typing, and copy-paste.  A length
+//                    threshold (MIN_COPILOT_CHANGE_LEN) reduces false positives
+//                    but cannot eliminate them.  Do NOT use this mode as a
+//                    reliable source of attribution; treat it as a hint only.
+//   "save_flush"   — Same heuristic events, flushed on file save rather than
+//                    on the debounce timer.  Same caveats apply.
+//   "chat_edit"    — Reserved for future use when a VS Code API for detecting
+//                    Copilot Chat edits becomes available.  Not currently
+//                    triggered by this extension.
+//
+// These limitations exist because VS Code does not expose a stable public API
+// that identifies the source of a document edit as Copilot vs. human vs. other
+// agent.  The VS Code team is tracking this at:
+//   https://github.com/microsoft/vscode/issues/XXXXX  (placeholder)
+
+// A single stable session ID generated once per window activation.
+// Using Date.now() + random suffix gives a unique-enough ID that is consistent
+// across all capture events in the same VS Code window, making it possible to
+// group them into one session rather than treating each event as isolated.
+const WINDOW_SESSION_ID = `vscode-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 function isDebug() {
     const v = process.env.AGENTDIFF_DEBUG || '';
     return v === '1' || v.toLowerCase() === 'true' || v.toLowerCase() === 'yes';
@@ -63,7 +95,10 @@ function fireCapture(payload) {
     proc.stdin.write(JSON.stringify(payload));
     proc.stdin.end();
     proc.on('error', (err) => debugLog(`spawn error: ${err.message}`));
-    debugLog(`fired capture: file=${payload.file_path} lines=${JSON.stringify(payload.lines)}`);
+    debugLog(
+        `fired capture: file=${payload.file_path} lines=${JSON.stringify(payload.lines)} ` +
+        `confidence=${payload.confidence} capture_mode=${payload.capture_mode}`
+    );
 }
 
 async function captureFile(filePath, pending) {
@@ -74,9 +109,11 @@ async function captureFile(filePath, pending) {
         cwd,
         file_path: filePath,
         model: await getCopilotModel(),
-        session_id: `vscode-${Date.now()}`,
+        session_id: WINDOW_SESSION_ID,
         prompt: null,
         lines: Array.from(pending.lines).sort((a, b) => a - b),
+        confidence: pending.confidence,
+        capture_mode: pending.capture_mode,
     });
 }
 
@@ -90,9 +127,9 @@ function activate(context) {
         return;
     }
 
-    debugLog('agentdiff Copilot extension activated');
+    debugLog(`agentdiff Copilot extension activated (session=${WINDOW_SESSION_ID})`);
 
-    // pendingChanges: filePath -> { lines: Set<number>, tool: string }
+    // pendingChanges: filePath -> { lines: Set<number>, tool: string, confidence: string, capture_mode: string }
     const pendingChanges = new Map();
     let flushTimer;
 
@@ -106,6 +143,8 @@ function activate(context) {
     }
 
     // Track document changes and attribute "large" insertions to Copilot.
+    // NOTE: This is a HEURISTIC — any sufficiently large insertion triggers
+    // capture regardless of actual source.  confidence="low", capture_mode="inline_heuristic".
     const changeDisposable = vscode.workspace.onDidChangeTextDocument((event) => {
         if (event.document.uri.scheme !== 'file') return;
         if (!copilotExt.isActive) return;
@@ -115,7 +154,12 @@ function activate(context) {
         // Skip metadata paths that are auto-generated.
         const relPath = vscode.workspace.asRelativePath(filePath, false);
         if (EXCLUDED_PATHS.some((p) => relPath.startsWith(p))) return;
-        const pending = pendingChanges.get(filePath) || { lines: new Set(), tool: 'inline' };
+        const pending = pendingChanges.get(filePath) || {
+            lines: new Set(),
+            tool: 'inline',
+            confidence: 'low',
+            capture_mode: 'inline_heuristic',
+        };
         let changed = false;
 
         for (const change of event.contentChanges) {
@@ -139,17 +183,25 @@ function activate(context) {
     });
 
     // On save, flush pending changes for that file immediately.
+    // confidence="low", capture_mode="save_flush" — same heuristic as inline,
+    // just triggered earlier (on save rather than debounce timer).
     const saveDisposable = vscode.workspace.onDidSaveTextDocument(async (doc) => {
         if (doc.uri.scheme !== 'file') return;
         const filePath = doc.uri.fsPath;
         const pending = pendingChanges.get(filePath);
         if (!pending || pending.lines.size === 0) return;
-        await captureFile(filePath, { lines: pending.lines, tool: 'save' });
+        await captureFile(filePath, {
+            lines: pending.lines,
+            tool: 'save',
+            confidence: 'low',
+            capture_mode: 'save_flush',
+        });
         pendingChanges.delete(filePath);
     });
 
     // Command: manually record all lines of the current file as Copilot-authored.
     // Useful after a Copilot Chat session that generated a whole file.
+    // This is the ONLY reliable (confidence="high") capture mode.
     const captureCmd = vscode.commands.registerCommand('agentdiff.captureNow', async () => {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
@@ -159,7 +211,12 @@ function activate(context) {
         const filePath = editor.document.uri.fsPath;
         const lines = new Set();
         for (let i = 1; i <= editor.document.lineCount; i++) lines.add(i);
-        await captureFile(filePath, { lines, tool: 'manual' });
+        await captureFile(filePath, {
+            lines,
+            tool: 'manual',
+            confidence: 'high',
+            capture_mode: 'manual',
+        });
         vscode.window.showInformationMessage('agentdiff: Copilot capture recorded');
     });
 
@@ -168,4 +225,4 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, _WINDOW_SESSION_ID: WINDOW_SESSION_ID };

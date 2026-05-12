@@ -164,6 +164,9 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> Optio
         metadata["author"] = git_author
     if pending.get("tool"):
         metadata["capture_tool"] = str(pending["tool"])
+    copilot_context = pending.get("copilot_context")
+    if isinstance(copilot_context, dict) and copilot_context:
+        metadata["copilot_context"] = copilot_context
 
     trace: dict = {
         "version": "0.1.0",

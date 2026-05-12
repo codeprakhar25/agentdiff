@@ -3,6 +3,33 @@
 AgentDiff capture script for VS Code GitHub Copilot.
 Receives events from the agentdiff-copilot VS Code extension via stdin.
 Writes to <repo>/.git/agentdiff/session.jsonl.
+
+Supported capture modes
+-----------------------
+``manual`` (confidence="high")
+    Triggered by the ``agentdiff.captureNow`` command.  The user explicitly
+    declares the current file as Copilot-authored after a Chat session.  All
+    lines in the file are recorded.  This is the only mode that produces
+    deterministic, reproducible attribution.
+
+``inline_heuristic`` (confidence="low")
+    Triggered by VS Code's ``onDidChangeTextDocument`` event whenever an
+    insertion exceeds the extension's length threshold.  This fires on edits
+    from *any* source — other AI agents running in the terminal, human
+    copy-paste, IDE refactors — not only Copilot.  Use only as a hint;
+    never treat it as a reliable attribution signal.
+
+``save_flush`` (confidence="low")
+    Same heuristic as ``inline_heuristic``, flushed on file save rather than
+    a debounce timer.  Same caveats apply.
+
+``chat_edit`` (confidence="low")
+    Reserved for a future VS Code API that identifies Copilot Chat edits
+    directly.  Not currently emitted by the extension.
+
+Because Copilot is in ``_EXCLUDED_AGENTS`` in prepare-ledger.py, captured
+events never win per-file attribution.  They are recorded in session.jsonl
+for usage statistics and surfaced via the ``copilot_context`` field in traces.
 """
 import os
 import sys
@@ -100,6 +127,14 @@ def main():
     if not isinstance(lines, list):
         lines = []
 
+    # Pass through confidence and capture_mode from the extension payload.
+    # These fields distinguish reliable captures (manual command) from heuristic
+    # ones (inline change detection) so downstream consumers can weight them
+    # appropriately.  Defaults to "low"/"inline_heuristic" for backwards
+    # compatibility with extension versions that predate this field.
+    confidence = payload.get("confidence") or "low"
+    capture_mode = payload.get("capture_mode") or "inline_heuristic"
+
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "agent": "copilot",
@@ -111,6 +146,8 @@ def main():
         "prompt": payload.get("prompt"),
         "acceptance": "verbatim",
         "lines": lines,
+        "confidence": confidence,
+        "capture_mode": capture_mode,
     }
 
     session_log = get_session_log(cwd)
@@ -121,6 +158,7 @@ def main():
         f.write(json.dumps(entry) + "\n")
     debug_log(
         f"wrote entry tool={tool} file={entry['file']} lines={entry.get('lines')} "
+        f"confidence={confidence} capture_mode={capture_mode} "
         f"repo_root={repo_root!r} session_log={session_log!r}"
     )
 

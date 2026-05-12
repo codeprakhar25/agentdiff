@@ -2,29 +2,66 @@
 /**
  * Unit tests for scripts/vscode-extension/extension.js
  *
- * Run with:  node --test scripts/tests/test_extension.js
+ * Run with: node --test scripts/tests/test_extension.js
  * (Node 18+ required for built-in test runner)
  *
  * The vscode module is not available outside VS Code, so we inject a mock
- * into require.cache before loading the extension.  All tests work offline
+ * into require.cache before loading the extension. All tests work offline
  * with zero npm dependencies.
  */
-const { test, describe, beforeEach } = require('node:test');
+const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const Module = require('module');
+const EventEmitter = require('events');
+const childProcess = require('child_process');
+const fs = require('fs');
 
-// ─── Mock vscode ─────────────────────────────────────────────────────────────
+const EXT_PATH = path.resolve(__dirname, '../../scripts/vscode-extension/extension.js');
 
-/**
- * Minimal vscode mock that lets the extension register listeners and commands
- * without an actual extension host.  Returns handles so tests can fire events.
- */
-function makeVscodeMock({ copilotInstalled = true, copilotActive = true } = {}) {
+let origExecFile;
+let origSpawn;
+let origExistsSync;
+let origAppendFileSync;
+let origMkdirSync;
+
+beforeEach(() => {
+    origExecFile = childProcess.execFile;
+    origSpawn = childProcess.spawn;
+    origExistsSync = fs.existsSync;
+    origAppendFileSync = fs.appendFileSync;
+    origMkdirSync = fs.mkdirSync;
+    fs.appendFileSync = () => {};
+    fs.mkdirSync = () => {};
+});
+
+afterEach(() => {
+    childProcess.execFile = origExecFile;
+    childProcess.spawn = origSpawn;
+    fs.existsSync = origExistsSync;
+    fs.appendFileSync = origAppendFileSync;
+    fs.mkdirSync = origMkdirSync;
+    delete require.cache[EXT_PATH];
+    delete require.cache.__vscode_mock__;
+});
+
+function makeUri(fsPath, scheme = 'file') {
+    return { scheme, fsPath };
+}
+
+function makeDocument(filePath, { scheme = 'file', version = 1, lineCount = 1 } = {}) {
+    return { uri: makeUri(filePath, scheme), version, lineCount };
+}
+
+function makeVscodeMock({ copilotInstalled = true, copilotActive = true, workspaceFolders } = {}) {
     const subscriptions = [];
     const registeredCommands = {};
+    const outputLines = [];
+    const folders = (workspaceFolders || ['/tmp/repo-a', '/tmp/repo-b']).map((folderPath) => ({
+        uri: makeUri(folderPath),
+        name: path.basename(folderPath),
+    }));
 
-    // EventEmitter-style helpers
     function makeEvent() {
         let _handler = null;
         const event = (handler) => {
@@ -35,21 +72,31 @@ function makeVscodeMock({ copilotInstalled = true, copilotActive = true } = {}) 
         return event;
     }
 
+    function folderFor(uri) {
+        return folders
+            .filter((folder) => {
+                const rel = path.relative(folder.uri.fsPath, uri.fsPath);
+                return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+            })
+            .sort((a, b) => b.uri.fsPath.length - a.uri.fsPath.length)[0];
+    }
+
     const onDidChangeTextDocument = makeEvent();
     const onDidSaveTextDocument = makeEvent();
+    const copilotExt = copilotInstalled ? { isActive: copilotActive } : undefined;
 
-    const copilotExt = copilotInstalled
-        ? { isActive: copilotActive }
-        : undefined;
-
-    const mock = {
+    return {
         workspace: {
+            workspaceFolders: folders,
             onDidChangeTextDocument,
             onDidSaveTextDocument,
-            asRelativePath: (fsPath) => fsPath.replace(/^\/tmp\/[^/]+\//, ''),
-            getConfiguration: (_section) => ({
-                get: (_key) => null,
-            }),
+            getWorkspaceFolder: folderFor,
+            asRelativePath: (uriOrPath) => {
+                const uri = typeof uriOrPath === 'string' ? makeUri(uriOrPath) : uriOrPath;
+                const folder = folderFor(uri);
+                return folder ? path.relative(folder.uri.fsPath, uri.fsPath) : uri.fsPath;
+            },
+            getConfiguration: () => ({ get: () => null }),
         },
         extensions: {
             getExtension: (id) => {
@@ -62,6 +109,11 @@ function makeVscodeMock({ copilotInstalled = true, copilotActive = true } = {}) 
         window: {
             activeTextEditor: null,
             showInformationMessage: () => {},
+            createOutputChannel: () => ({
+                appendLine: (line) => outputLines.push(line),
+                show: () => { outputLines.push('__shown__'); },
+                dispose: () => {},
+            }),
         },
         commands: {
             registerCommand: (id, fn) => {
@@ -69,36 +121,25 @@ function makeVscodeMock({ copilotInstalled = true, copilotActive = true } = {}) 
                 return { dispose: () => {} };
             },
         },
-        Uri: { parse: (s) => ({ scheme: 'file', fsPath: s }) },
-
-        // Test helpers (not part of real vscode API)
+        lm: {
+            selectChatModels: async () => [{ id: 'copilot-test-model' }],
+        },
+        Uri: { parse: (s) => makeUri(s) },
         _fire: { change: onDidChangeTextDocument.fire, save: onDidSaveTextDocument.fire },
         _commands: registeredCommands,
         _subscriptions: subscriptions,
+        _outputLines: outputLines,
     };
-
-    return mock;
 }
 
-// ─── Load extension with a given vscode mock ─────────────────────────────────
-
-const EXT_PATH = path.resolve(__dirname, '../../scripts/vscode-extension/extension.js');
-
 function loadExtension(vscodeMock) {
-    // Patch require.cache with the mock before loading.
-    // The module key must match what extension.js resolves 'vscode' to.
-    const fakeVscodeId = require.resolve('path'); // any stable key — we overwrite below
-    const vscodeKey = 'vscode'; // extension does: require('vscode')
-
-    // Node resolves built-in modules differently; inject via _resolveFilename hook.
     const origResolve = Module._resolveFilename;
     Module._resolveFilename = function (request, parent, isMain, options) {
         if (request === 'vscode') return '__vscode_mock__';
         return origResolve.call(this, request, parent, isMain, options);
     };
 
-    // Place the mock in require.cache under our fake id.
-    require.cache['__vscode_mock__'] = {
+    require.cache.__vscode_mock__ = {
         id: '__vscode_mock__',
         filename: '__vscode_mock__',
         loaded: true,
@@ -107,17 +148,13 @@ function loadExtension(vscodeMock) {
         paths: [],
     };
 
-    // Clear the extension from cache so it re-executes with the new mock.
     delete require.cache[EXT_PATH];
 
-    let ext;
     try {
-        ext = require(EXT_PATH);
+        return require(EXT_PATH);
     } finally {
         Module._resolveFilename = origResolve;
     }
-
-    return ext;
 }
 
 function activateExt(vscodeMock) {
@@ -127,139 +164,182 @@ function activateExt(vscodeMock) {
     return { ext, vscode: vscodeMock };
 }
 
-// ─── Helper: build a fake text document change event ────────────────────────
-
-function makeChangeEvent(filePath, changes, { scheme = 'file', isActive = true } = {}) {
+function makeChangeEvent(filePath, changes, { scheme = 'file', version = 1 } = {}) {
     return {
-        document: { uri: { scheme, fsPath: filePath } },
+        document: makeDocument(filePath, { scheme, version }),
         contentChanges: changes.map(({ text, startLine = 0 }) => ({
             text,
             range: { start: { line: startLine } },
         })),
-        // stub — vscode extension checks copilotExt.isActive, not this
     };
 }
 
-// ─── Tests ───────────────────────────────────────────────────────────────────
+function installRepoStubs({ initialized = true } = {}) {
+    const spawned = [];
 
-describe('Extension: Copilot detection threshold (MIN_COPILOT_CHANGE_LEN = 50)', () => {
-    test('does not capture a short single-line insertion (<50 chars)', (t, done) => {
+    childProcess.execFile = (_cmd, args, opts, cb) => {
+        const cwd = opts.cwd;
+        const repo = cwd.startsWith('/tmp/repo-a') ? '/tmp/repo-a'
+            : cwd.startsWith('/tmp/repo-b') ? '/tmp/repo-b'
+                : null;
+        if (!repo) {
+            cb(new Error('not a repo'), '', 'fatal');
+            return;
+        }
+        if (args.join(' ') === 'rev-parse --show-toplevel') {
+            cb(null, `${repo}\n`, '');
+            return;
+        }
+        if (args.join(' ') === 'rev-parse --git-common-dir') {
+            cb(null, `${repo}/.git\n`, '');
+            return;
+        }
+        cb(new Error('unexpected git args'), '', '');
+    };
+
+    fs.existsSync = (p) => {
+        if (p === '__AGENTDIFF_CAPTURE_COPILOT__') return true;
+        if (String(p).endsWith('/.git/agentdiff')) return initialized;
+        return origExistsSync(p);
+    };
+
+    childProcess.spawn = (command, args) => {
+        const proc = new EventEmitter();
+        proc.stderr = new EventEmitter();
+        proc.stdin = {
+            chunks: [],
+            write(chunk) { this.chunks.push(String(chunk)); },
+            end() {
+                spawned.push({
+                    command,
+                    args,
+                    payload: JSON.parse(this.chunks.join('')),
+                });
+            },
+        };
+        return proc;
+    };
+
+    return spawned;
+}
+
+describe('Extension: edit capture flow', () => {
+    test('captures a large insertion on save with repo, workspace, version, and lines', async () => {
+        const spawned = installRepoStubs();
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        // 49 chars — below threshold
-        const shortText = 'x'.repeat(49);
-        vscode._fire.change(makeChangeEvent('/tmp/repo/src/main.rs', [{ text: shortText }]));
+        const filePath = '/tmp/repo-a/src/main.rs';
+        vscode._fire.change(makeChangeEvent(filePath, [{ text: 'x'.repeat(80), startLine: 2 }], { version: 7 }));
+        await vscode._fire.save(makeDocument(filePath, { version: 7 }));
 
-        // Wait longer than the 2-second debounce to confirm nothing fires.
-        // We can't easily intercept the spawn, so we just check no error is thrown
-        // and the handler runs without crashing.
-        setTimeout(() => done(), 50);
+        assert.equal(spawned.length, 1);
+        assert.equal(spawned[0].command, 'python3');
+        assert.deepEqual(spawned[0].payload.lines, [3]);
+        assert.equal(spawned[0].payload.event, 'save');
+        assert.equal(spawned[0].payload.cwd, '/tmp/repo-a');
+        assert.equal(spawned[0].payload.repo_root, '/tmp/repo-a');
+        assert.equal(spawned[0].payload.workspace_folder, '/tmp/repo-a');
+        assert.equal(spawned[0].payload.document_version, 7);
+        assert.equal(spawned[0].payload.model, 'copilot-test-model');
     });
 
-    test('handles multi-line insertion (>1 newline) regardless of length', (t, done) => {
+    test('captures multi-line insertions below the single-line threshold', async () => {
+        const spawned = installRepoStubs();
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        // Only 5 chars but spans 2 lines
-        vscode._fire.change(makeChangeEvent('/tmp/repo/src/main.rs', [{ text: 'a\nb' }]));
+        const filePath = '/tmp/repo-a/src/main.rs';
+        vscode._fire.change(makeChangeEvent(filePath, [{ text: 'a\nb', startLine: 4 }], { version: 2 }));
+        await vscode._fire.save(makeDocument(filePath, { version: 2 }));
 
-        // Extension should not throw
-        setTimeout(() => done(), 50);
+        assert.equal(spawned.length, 1);
+        assert.deepEqual(spawned[0].payload.lines, [5, 6]);
     });
 
-    test('ignores changes from non-file URI schemes', (t, done) => {
+    test('does not capture a short single-line insertion', async () => {
+        const spawned = installRepoStubs();
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        // git scheme — should be ignored immediately
-        vscode._fire.change(makeChangeEvent('/tmp/repo/src/main.rs', [{ text: 'x'.repeat(100) }], { scheme: 'git' }));
+        const filePath = '/tmp/repo-a/src/main.rs';
+        vscode._fire.change(makeChangeEvent(filePath, [{ text: 'x'.repeat(49) }]));
+        await vscode._fire.save(makeDocument(filePath));
 
-        setTimeout(() => done(), 50);
+        assert.equal(spawned.length, 0);
+    });
+
+    test('skips non-file documents before buffering capture state', async () => {
+        const spawned = installRepoStubs();
+        const vscode = makeVscodeMock();
+        activateExt(vscode);
+
+        vscode._fire.change(makeChangeEvent('/tmp/repo-a/src/main.rs', [{ text: 'x'.repeat(80) }], { scheme: 'git' }));
+
+        assert.equal(spawned.length, 0);
     });
 });
 
-describe('Extension: EXCLUDED_PATHS filtering', () => {
-    test('ignores changes to .agentdiff/ paths', (t, done) => {
+describe('Extension: multi-root workspace and path filtering', () => {
+    test('uses the owning workspace folder in a multi-root workspace', async () => {
+        const spawned = installRepoStubs();
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        // This path resolves to something that starts with .agentdiff/ after asRelativePath
-        const event = {
-            document: { uri: { scheme: 'file', fsPath: '/tmp/repo/.agentdiff/ledger.jsonl' } },
-            contentChanges: [{ text: 'x'.repeat(200), range: { start: { line: 0 } } }],
-        };
-        // asRelativePath will return '.agentdiff/ledger.jsonl' — should be filtered
-        const vscodeReal = require.__spy || vscode;
-        vscode.workspace.asRelativePath = (_p) => '.agentdiff/ledger.jsonl';
+        const filePath = '/tmp/repo-b/pkg/lib.js';
+        vscode._fire.change(makeChangeEvent(filePath, [{ text: 'y'.repeat(80), startLine: 0 }]));
+        await vscode._fire.save(makeDocument(filePath));
 
-        vscode._fire.change(event);
-        setTimeout(() => done(), 50);
+        assert.equal(spawned.length, 1);
+        assert.equal(spawned[0].payload.cwd, '/tmp/repo-b');
+        assert.equal(spawned[0].payload.repo_root, '/tmp/repo-b');
+        assert.equal(spawned[0].payload.workspace_folder, '/tmp/repo-b');
     });
 
-    test('ignores changes to .git/ paths', (t, done) => {
+    test('ignores .agentdiff and .git paths relative to the owning root', async () => {
+        const spawned = installRepoStubs();
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        const event = {
-            document: { uri: { scheme: 'file', fsPath: '/tmp/repo/.git/COMMIT_EDITMSG' } },
-            contentChanges: [{ text: 'x'.repeat(200), range: { start: { line: 0 } } }],
-        };
-        vscode.workspace.asRelativePath = (_p) => '.git/COMMIT_EDITMSG';
+        vscode._fire.change(makeChangeEvent('/tmp/repo-b/.agentdiff/ledger.jsonl', [{ text: 'x'.repeat(80) }]));
+        vscode._fire.change(makeChangeEvent('/tmp/repo-b/.git/COMMIT_EDITMSG', [{ text: 'x'.repeat(80) }]));
 
-        vscode._fire.change(event);
-        setTimeout(() => done(), 50);
+        assert.equal(spawned.length, 0);
     });
 });
 
-describe('Extension: Copilot not installed', () => {
-    test('activate() returns early without registering listeners when Copilot is absent', () => {
-        const vscode = makeVscodeMock({ copilotInstalled: false });
-        const { ext } = activateExt(vscode);
-
-        // If Copilot is not installed, no subscriptions should be registered
-        assert.equal(vscode._subscriptions.length, 0,
-            'Should not register any listeners when Copilot extension is absent');
-    });
-});
-
-describe('Extension: getCopilotModel() fallback', () => {
-    test('returns "gpt-4o" when copilot-chat extension is present', () => {
-        // Load module and inspect getCopilotModel directly by activating
-        // and checking what model ends up in the capture payload.
-        // We do this indirectly — if chat ext is present without advanced config,
-        // getCopilotModel returns 'gpt-4o'.  We verify activate() doesn't throw.
-        const vscode = makeVscodeMock({ copilotInstalled: true, copilotActive: true });
-        // Make copilot-chat also present
-        vscode.extensions.getExtension = (id) => {
-            if (id === 'GitHub.copilot') return { isActive: true };
-            if (id === 'GitHub.copilot-chat') return { isActive: true };
-            return undefined;
-        };
-        assert.doesNotThrow(() => activateExt(vscode));
-    });
-
-    test('returns "copilot" fallback when no config and no chat ext', () => {
-        const vscode = makeVscodeMock();
-        vscode.extensions.getExtension = (id) => {
-            if (id === 'GitHub.copilot') return { isActive: true };
-            // no chat ext
-            return undefined;
-        };
-        assert.doesNotThrow(() => activateExt(vscode));
-    });
-});
-
-describe('Extension: agentdiff.captureNow command', () => {
-    test('command is registered after activation', () => {
+describe('Extension: diagnostics and commands', () => {
+    test('logs a structured warning when the repo has not been initialized', async () => {
+        const spawned = installRepoStubs({ initialized: false });
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
-        assert.ok('agentdiff.captureNow' in vscode._commands,
-            'agentdiff.captureNow command should be registered');
+        const filePath = '/tmp/repo-a/src/main.rs';
+        vscode._fire.change(makeChangeEvent(filePath, [{ text: 'x'.repeat(80) }]));
+        await vscode._fire.save(makeDocument(filePath));
+
+        assert.equal(spawned.length, 0);
+        assert.ok(vscode._outputLines.some((line) => line.includes('"event":"capture.skipped_repo_not_initialized"')));
     });
 
-    test('captureNow shows message when no active editor', async () => {
+    test('registers capture and log commands', () => {
+        const vscode = makeVscodeMock();
+        activateExt(vscode);
+
+        assert.ok('agentdiff.captureNow' in vscode._commands);
+        assert.ok('agentdiff.openLogs' in vscode._commands);
+    });
+
+    test('open logs command shows the output channel', () => {
+        const vscode = makeVscodeMock();
+        activateExt(vscode);
+
+        vscode._commands['agentdiff.openLogs']();
+
+        assert.ok(vscode._outputLines.includes('__shown__'));
+    });
+
+    test('captureNow shows a message when no active editor exists', async () => {
         const vscode = makeVscodeMock();
         activateExt(vscode);
 
@@ -271,10 +351,29 @@ describe('Extension: agentdiff.captureNow command', () => {
 
         assert.ok(shown && shown.includes('agentdiff'), `Expected info message, got: ${shown}`);
     });
+
+    test('activate returns early without listeners when Copilot is absent', () => {
+        const vscode = makeVscodeMock({ copilotInstalled: false });
+        activateExt(vscode);
+
+        assert.equal(vscode._subscriptions.length, 0);
+        assert.ok(vscode._outputLines.some((line) => line.includes('"event":"extension.inactive_copilot_missing"')));
+    });
+});
+
+describe('Extension: WSL path helpers', () => {
+    test('translates common Windows and WSL UNC paths for WSL capture scripts', () => {
+        const vscode = makeVscodeMock();
+        const { ext } = activateExt(vscode);
+
+        assert.equal(ext._test.windowsPathToWsl('C:\\Users\\me\\repo\\file.js'), '/mnt/c/Users/me/repo/file.js');
+        assert.equal(ext._test.windowsPathToWsl('\\\\wsl.localhost\\Ubuntu\\home\\me\\repo\\file.js'), '/home/me/repo/file.js');
+        assert.equal(ext._test.windowsPathToWsl('/home/me/repo/file.js'), '/home/me/repo/file.js');
+    });
 });
 
 describe('Extension: deactivate', () => {
-    test('deactivate() does not throw', () => {
+    test('deactivate does not throw', () => {
         const vscode = makeVscodeMock();
         const { ext } = activateExt(vscode);
         assert.doesNotThrow(() => ext.deactivate());

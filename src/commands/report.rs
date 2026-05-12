@@ -553,15 +553,18 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
             // Warn when low-confidence Copilot heuristic captures were present.
             // These fire on any large VS Code document change — not only real
             // Copilot completions — so attribution may be unreliable.
-            let has_cpl_warning = traces.iter().any(|trace| {
-                trace
-                    .agentdiff_metadata()
-                    .as_ref()
-                    .and_then(|m| m.copilot_context.as_ref())
-                    .and_then(|ctx| ctx.get("low_confidence"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-            });
+            let has_cpl_warning = traces
+                .iter()
+                .filter(|t| group.trace_ids.contains(&short_id(&t.id).to_string()))
+                .any(|trace| {
+                    trace
+                        .agentdiff_metadata()
+                        .as_ref()
+                        .and_then(|m| m.copilot_context.as_ref())
+                        .and_then(|ctx| ctx.get("low_confidence"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                });
             if has_cpl_warning {
                 out.push_str(
                     "  - Copilot context: low-confidence heuristic capture detected \

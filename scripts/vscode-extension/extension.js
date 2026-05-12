@@ -276,6 +276,15 @@ async function captureDocument(document, pending) {
 
 function activate(context) {
     const channel = getOutputChannel();
+
+    // Register openLogs before the Copilot guard so it works even when capture is inactive.
+    const openLogsCmd = vscode.commands.registerCommand('agentdiff.openLogs', () => {
+        if (channel && typeof channel.show === 'function') {
+            channel.show();
+        }
+    });
+    context.subscriptions.push(openLogsCmd);
+
     const copilotExt =
         vscode.extensions.getExtension('GitHub.copilot') ||
         vscode.extensions.getExtension('GitHub.copilot-chat');
@@ -371,12 +380,14 @@ function activate(context) {
         pending.tool = 'save';
         pending.document = doc;
         pending.documentVersion = doc.version || pending.documentVersion || null;
-        await captureDocument(doc, pending);
+        // Remove before awaiting so the flush timer cannot fire a duplicate capture
+        // for the same save event while captureDocument is in flight.
         pendingChanges.delete(filePath);
         if (pendingChanges.size === 0 && flushTimer) {
             clearTimeout(flushTimer);
             flushTimer = null;
         }
+        await captureDocument(doc, pending);
     });
 
     // Command: manually record all lines of the current file as Copilot-authored.
@@ -400,13 +411,7 @@ function activate(context) {
             : 'agentdiff: Copilot capture skipped; see AgentDiff output');
     });
 
-    const openLogsCmd = vscode.commands.registerCommand('agentdiff.openLogs', () => {
-        if (channel && typeof channel.show === 'function') {
-            channel.show();
-        }
-    });
-
-    context.subscriptions.push(changeDisposable, saveDisposable, captureCmd, openLogsCmd);
+    context.subscriptions.push(changeDisposable, saveDisposable, captureCmd);
 }
 
 function deactivate() {

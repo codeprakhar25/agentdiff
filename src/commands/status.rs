@@ -1,8 +1,11 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use colored::Colorize;
+use std::collections::HashMap;
 use std::process::Command;
 
 use crate::cli::StatusArgs;
+use crate::data::AgentTrace;
 use crate::keys;
 use crate::store::{self, Store};
 use crate::util::{dim, ok, print_command_header, warn};
@@ -245,11 +248,28 @@ fn print_agent_hook_status() {
             continue;
         }
         any_checked = true;
-        let registered = std::fs::read_to_string(&path)
-            .map(|s| s.contains(check.marker))
-            .unwrap_or(false);
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let registered = content.contains(check.marker);
         if registered {
-            println!("  {} agent hook     {} registered", prefix(ok()), check.name);
+            // Codex: additionally verify features.codex_hooks = true in config.toml.
+            if check.name == "codex" {
+                let hooks_flag = content
+                    .parse::<toml::Value>()
+                    .ok()
+                    .and_then(|v| v.get("features")?.get("codex_hooks")?.as_bool())
+                    .unwrap_or(false);
+                if hooks_flag {
+                    println!("  {} agent hook     codex registered", prefix(ok()));
+                } else {
+                    println!(
+                        "  {} agent hook     codex hook registered but features.codex_hooks not enabled — re-run 'agentdiff configure'",
+                        prefix(warn())
+                    );
+                    any_missing = true;
+                }
+            } else {
+                println!("  {} agent hook     {} registered", prefix(ok()), check.name);
+            }
         } else {
             println!(
                 "  {} agent hook     {} config found but agentdiff hook missing — re-run 'agentdiff configure'",
@@ -265,18 +285,48 @@ fn print_agent_hook_status() {
         let gemini_dir = home.join(".gemini");
         if gemini_dir.exists() {
             any_checked = true;
-            let cli_ok = std::fs::read_to_string(gemini_dir.join("settings.json"))
-                .map(|s| s.contains("capture-antigravity"))
-                .unwrap_or(false);
+            let settings_raw =
+                std::fs::read_to_string(gemini_dir.join("settings.json")).unwrap_or_default();
+            let cli_ok = settings_raw.contains("capture-antigravity");
+            // Additionally verify tools.enableHooks = true — without this, Gemini ignores hooks
+            // even when the hook entries are present in settings.json.
+            let hooks_enabled = cli_ok
+                && serde_json::from_str::<serde_json::Value>(&settings_raw)
+                    .ok()
+                    .and_then(|v| v.get("tools")?.get("enableHooks")?.as_bool())
+                    .unwrap_or(false);
             let rule_ok = std::fs::read_to_string(gemini_dir.join("GEMINI.md"))
                 .map(|s| s.contains("agentdiff: managed block"))
                 .unwrap_or(false);
             match (cli_ok, rule_ok) {
                 (true, true) => {
-                    println!("  {} agent hook     gemini-cli registered; antigravity rule set", prefix(ok()));
+                    if hooks_enabled {
+                        println!(
+                            "  {} agent hook     gemini-cli registered; antigravity rule set",
+                            prefix(ok())
+                        );
+                    } else {
+                        println!(
+                            "  {} agent hook     gemini-cli registered; antigravity rule set",
+                            prefix(ok())
+                        );
+                        println!(
+                            "  {} agent hook     gemini tools.enableHooks not set — re-run 'agentdiff configure'",
+                            prefix(warn())
+                        );
+                        any_missing = true;
+                    }
                 }
                 (true, false) => {
-                    println!("  {} agent hook     gemini-cli registered", prefix(ok()));
+                    if hooks_enabled {
+                        println!("  {} agent hook     gemini-cli registered", prefix(ok()));
+                    } else {
+                        println!(
+                            "  {} agent hook     gemini-cli registered but tools.enableHooks not set — re-run 'agentdiff configure'",
+                            prefix(warn())
+                        );
+                        any_missing = true;
+                    }
                     println!(
                         "  {} agent hook     antigravity GEMINI.md rule missing — re-run 'agentdiff configure'",
                         prefix(warn())
@@ -482,8 +532,45 @@ fn run_remote(store: &Store, args: &StatusArgs) -> Result<()> {
         }
     }
 
+    let since_cutoff: Option<DateTime<Utc>> = match &args.since {
+        None => None,
+        Some(s) => Some(activity_cutoff_from_since(Utc::now(), s)?),
+    };
+
+    print_remote_developer_health(store, &remote_refs, since_cutoff);
+
     println!();
     Ok(())
+}
+
+/// Oldest UTC instant inside the `--since` window (`7`, `7d`, `48h`):
+/// entries with activity at or after this instant pass the filter.
+fn activity_cutoff_from_since(now: DateTime<Utc>, s: &str) -> Result<DateTime<Utc>> {
+    let s = s.trim().to_ascii_lowercase();
+    anyhow::ensure!(!s.is_empty(), "--since must not be empty");
+    let duration = if let Some(rest) = s.strip_suffix('d') {
+        let n: i64 = rest
+            .trim()
+            .parse()
+            .context("invalid day count in --since")?;
+        chrono::Duration::days(n)
+    } else if let Some(rest) = s.strip_suffix('h') {
+        let n: i64 = rest
+            .trim()
+            .parse()
+            .context("invalid hour count in --since")?;
+        chrono::Duration::hours(n)
+    } else {
+        let n: i64 = s
+            .parse()
+            .context("invalid --since (expected N, Nd, or Nh)")?;
+        chrono::Duration::days(n)
+    };
+    anyhow::ensure!(
+        duration > chrono::Duration::zero(),
+        "--since must be positive"
+    );
+    Ok(now - duration)
 }
 
 fn fetch_trace_count(repo_root: &std::path::Path, ref_name: &str) -> Option<usize> {
@@ -508,6 +595,165 @@ fn count_local_ref(repo_root: &std::path::Path, ref_name: &str) -> Option<usize>
     }
     let content = String::from_utf8_lossy(&out.stdout);
     Some(content.lines().filter(|l| !l.trim().is_empty()).count())
+}
+
+fn load_traces_from_ref(repo_root: &std::path::Path, ref_name: &str) -> Vec<AgentTrace> {
+    let spec = format!("{ref_name}:traces.jsonl");
+    let mut raw = Command::new("git")
+        .args(["show", &spec])
+        .current_dir(repo_root)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    if raw.lines().all(|l| l.trim().is_empty()) {
+        if let Ok(Some(api_raw)) =
+            store::fetch_ref_content_via_api(repo_root, ref_name, "traces.jsonl")
+        {
+            raw = api_raw;
+        }
+    }
+
+    store::parse_traces_from_jsonl(&raw)
+}
+
+fn print_remote_developer_health(
+    store: &Store,
+    remote_refs: &[(String, String)],
+    since_cutoff: Option<DateTime<Utc>>,
+) {
+    const STALE: chrono::Duration = chrono::Duration::days(7);
+
+    let trace_refs: Vec<_> = remote_refs
+        .iter()
+        .filter(|(_, r)| r.starts_with("refs/agentdiff/traces/"))
+        .collect();
+    if trace_refs.is_empty() {
+        return;
+    }
+
+    let now = Utc::now();
+
+    let mut dev_map: HashMap<String, (usize, DateTime<Utc>)> = HashMap::new();
+    let mut per_ref: Vec<(String, usize, Option<DateTime<Utc>>)> = Vec::new();
+
+    for (_, ref_name) in &trace_refs {
+        let traces = load_traces_from_ref(&store.repo_root, ref_name);
+        let mut last: Option<DateTime<Utc>> = None;
+        for t in &traces {
+            let ts = t.timestamp;
+            last = Some(match last {
+                None => ts,
+                Some(p) => p.max(ts),
+            });
+            let author = t
+                .agentdiff_metadata()
+                .and_then(|m| m.author)
+                .unwrap_or_else(|| "unknown".to_string());
+            let entry = dev_map.entry(author).or_insert((0, ts));
+            entry.0 += 1;
+            if ts > entry.1 {
+                entry.1 = ts;
+            }
+        }
+        per_ref.push(((*ref_name).clone(), traces.len(), last));
+    }
+
+    println!();
+    println!("{}", "  REMOTE TRACE BRANCHES".dimmed());
+    let bhdr = format!("  {:<42} {:<8} {}", "REF (truncated)", "TRACES", "LAST TRACE");
+    println!("{}", bhdr.dimmed());
+    println!("  {}", "─".repeat(76).dimmed());
+
+    per_ref.sort_by(|a, b| match (a.2, b.2) {
+        (Some(ta), Some(tb)) => tb.cmp(&ta).then_with(|| a.0.cmp(&b.0)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.0.cmp(&b.0),
+    });
+
+    for (ref_name, count, last_ts) in &per_ref {
+        let short_ref: std::borrow::Cow<'_, str> = if ref_name.len() > 42 {
+            ref_name[..42].into()
+        } else {
+            ref_name.as_str().into()
+        };
+        let (last_str, status_px) = match last_ts {
+            None => ("(no traces)".to_string(), prefix(warn())),
+            Some(ts) => {
+                let age = now.signed_duration_since(*ts);
+                let s = if age.num_days() > 0 {
+                    format!("{}d ago", age.num_days())
+                } else if age.num_hours() > 0 {
+                    format!("{}h ago", age.num_hours())
+                } else {
+                    "just now".to_string()
+                };
+                let px = if age > STALE {
+                    prefix(warn())
+                } else {
+                    prefix(ok())
+                };
+                (s, px)
+            }
+        };
+        println!(
+            "  {} {:<42} {:<8} {}",
+            status_px,
+            short_ref,
+            count,
+            last_str
+        );
+    }
+
+    if dev_map.is_empty() {
+        return;
+    }
+
+    let mut devs: Vec<_> = dev_map.iter().collect();
+    devs.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+
+    let devs: Vec<_> = devs
+        .into_iter()
+        .filter(|(_, (_, last_seen))| {
+            since_cutoff.map_or(true, |cutoff| *last_seen >= cutoff)
+        })
+        .collect();
+
+    if devs.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("{}", "  DEVELOPERS (from remote traces)".dimmed());
+    let hdr = format!("  {:<32} {:<10} {}", "DEVELOPER", "TRACES", "LAST ACTIVE");
+    println!("{}", hdr.dimmed());
+    println!("  {}", "─".repeat(60).dimmed());
+
+    for (author, (count, last_seen)) in devs {
+        let age = now.signed_duration_since(*last_seen);
+        let age_str = if age.num_days() > 0 {
+            format!("{}d ago", age.num_days())
+        } else if age.num_hours() > 0 {
+            format!("{}h ago", age.num_hours())
+        } else {
+            "just now".to_string()
+        };
+        let status_prefix = if age.num_days() > 7 {
+            prefix(warn())
+        } else {
+            prefix(ok())
+        };
+        println!(
+            "  {} {:<32} {:<10} {}",
+            status_prefix,
+            author,
+            count,
+            age_str
+        );
+    }
 }
 
 fn local_ref_status(store: &Store, ref_name: &str) -> String {

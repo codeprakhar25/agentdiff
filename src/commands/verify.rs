@@ -109,22 +109,26 @@ pub fn run(store: &Store, args: &VerifyArgs) -> Result<()> {
                     Ok(k) => {
                         key_cache.insert(kid.to_string(), k);
                     }
-                    Err(_) => {
-                        // Registry miss — no key available for this record.
-                        invalid_sig += 1;
-                        eprintln!(
-                            "{} {} — key_id {} not found locally or in registry \
-                             (run 'agentdiff keys register' on the signing machine)",
-                            err(),
-                            short,
-                            &kid[..kid.len().min(16)]
-                        );
-                        if args.strict {
-                            print_summary(to_verify.len(), valid, missing_sig, invalid_sig);
-                            std::process::exit(2);
+                    Err(_) => match keys::try_load_archived_verifying_key(kid)? {
+                        Some(k) => {
+                            key_cache.insert(kid.to_string(), k);
                         }
-                        continue;
-                    }
+                        None => {
+                            invalid_sig += 1;
+                            eprintln!(
+                                "{} {} — key_id {} not found locally, in registry, or in ~/.agentdiff/keys/archive \
+                                 (run 'agentdiff keys register' on the signing machine)",
+                                err(),
+                                short,
+                                &kid[..kid.len().min(16)]
+                            );
+                            if args.strict {
+                                print_summary(to_verify.len(), valid, missing_sig, invalid_sig);
+                                std::process::exit(2);
+                            }
+                            continue;
+                        }
+                    },
                 }
             }
             key_cache.get(kid).unwrap()

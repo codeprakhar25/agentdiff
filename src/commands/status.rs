@@ -307,11 +307,7 @@ fn print_agent_hook_status() {
                         );
                     } else {
                         println!(
-                            "  {} agent hook     gemini-cli registered; antigravity rule set",
-                            prefix(ok())
-                        );
-                        println!(
-                            "  {} agent hook     gemini tools.enableHooks not set — re-run 'agentdiff configure'",
+                            "  {} agent hook     gemini-cli registered; antigravity rule set but tools.enableHooks not set — re-run 'agentdiff configure'",
                             prefix(warn())
                         );
                         any_missing = true;

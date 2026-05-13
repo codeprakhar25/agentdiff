@@ -64,10 +64,8 @@ pub fn archive_current_keypair() -> Result<Option<PathBuf>> {
     let dest_pub = dest.join("public.key");
     std::fs::rename(&priv_path, &dest_priv)
         .with_context(|| format!("archiving private key to {}", dest_priv.display()))?;
-    if pub_path.exists() {
-        std::fs::rename(&pub_path, &dest_pub)
-            .with_context(|| format!("archiving public key to {}", dest_pub.display()))?;
-    }
+    std::fs::rename(&pub_path, &dest_pub)
+        .with_context(|| format!("archiving public key to {}", dest_pub.display()))?;
 
     let meta = ArchivedKeyMeta {
         key_id: kid,

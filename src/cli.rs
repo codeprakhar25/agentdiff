@@ -83,6 +83,10 @@ pub struct StatusArgs {
     /// With --remote: skip fetching trace counts for each ref (faster)
     #[arg(long)]
     pub no_fetch: bool,
+
+    /// With --remote: only show developers active within this window (e.g. 7, 7d, 48h)
+    #[arg(long, value_name = "DURATION")]
+    pub since: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -316,8 +320,15 @@ pub enum KeysAction {
     Init,
     /// Register the local public key in the git key registry (refs/agentdiff/keys/)
     Register,
-    /// Rotate the local keypair: back up the old keys, generate new ones, and register them
-    Rotate,
+    /// Rotate the local keypair: archive the old keys, generate new ones, and register them
+    Rotate(RotateKeysArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct RotateKeysArgs {
+    /// Re-sign the last N entries in the current branch's local trace buffer with the new key
+    #[arg(long)]
+    pub resign_last: Option<usize>,
 }
 
 // ── Verify ────────────────────────────────────────────────────────────────────

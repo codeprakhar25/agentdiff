@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
 
+use crate::cli::RotateKeysArgs;
 use crate::keys;
 use crate::store;
 use crate::util::ok;
@@ -44,24 +45,19 @@ pub fn run_register(store: &crate::store::Store) -> Result<()> {
     Ok(())
 }
 
-/// Rotate the local keypair: back up existing keys, generate new ones, register in registry.
-pub fn run_rotate(store: &crate::store::Store) -> Result<()> {
+/// Rotate the local keypair: archive existing keys, generate new ones, register in registry.
+pub fn run_rotate(store: &crate::store::Store, args: &RotateKeysArgs) -> Result<()> {
     let priv_path = keys::private_key_path()?;
     let pub_path = keys::public_key_path()?;
 
-    // Back up old keys if they exist.
     if priv_path.exists() {
-        let bak_priv = priv_path.with_extension("key.bak");
-        let bak_pub = pub_path.with_extension("key.bak");
-        std::fs::rename(&priv_path, &bak_priv)
-            .with_context(|| format!("backing up private key to {}", bak_priv.display()))?;
-        std::fs::rename(&pub_path, &bak_pub)
-            .with_context(|| format!("backing up public key to {}", bak_pub.display()))?;
-        println!(
-            "  Old keys backed up to {} and {}",
-            bak_priv.display(),
-            bak_pub.display()
-        );
+        if let Some(archived) = keys::archive_current_keypair()? {
+            println!(
+                "  {} previous keypair archived to {}",
+                ok(),
+                archived.display()
+            );
+        }
     }
 
     let (kid, _vk) = keys::generate_keypair_at(&priv_path, &pub_path)?;
@@ -85,6 +81,60 @@ pub fn run_rotate(store: &crate::store::Store) -> Result<()> {
     println!(
         "  Run {} to push the updated key registry to GitHub.",
         "agentdiff push".cyan()
+    );
+
+    if let Some(n) = args.resign_last.filter(|n| *n > 0) {
+        resign_last_local_traces(store, n)?;
+    }
+
+    Ok(())
+}
+
+/// Re-sign the last `n` JSONL records in the current branch's local trace buffer.
+fn resign_last_local_traces(store: &crate::store::Store, n: usize) -> Result<()> {
+    let branch = store
+        .current_branch()
+        .context("detached HEAD — use a branch to re-sign the local trace buffer")?;
+    let path = store.local_traces_path(&branch);
+    if !path.exists() {
+        anyhow::bail!(
+            "no local trace buffer at {} — nothing to re-sign",
+            path.display()
+        );
+    }
+
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading {}", path.display()))?;
+    let mut lines: Vec<String> = raw.lines().map(String::from).collect();
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    anyhow::ensure!(!lines.is_empty(), "local trace buffer is empty");
+
+    let take = n.min(lines.len());
+    let start = lines.len() - take;
+    for i in start..lines.len() {
+        let mut val: serde_json::Value = serde_json::from_str(&lines[i])
+            .with_context(|| format!("parsing trace line {}", i + 1))?;
+        if let Some(obj) = val.as_object_mut() {
+            obj.remove("sig");
+        }
+        let sig = keys::sign_record(&val)?;
+        val.as_object_mut()
+            .context("trace entry must be a JSON object")?
+            .insert("sig".to_string(), serde_json::to_value(&sig)?);
+        lines[i] = serde_json::to_string(&val)?;
+    }
+
+    std::fs::write(&path, lines.join("\n") + "\n")
+        .with_context(|| format!("writing {}", path.display()))?;
+
+    let label = if take == 1 { "entry" } else { "entries" };
+    println!(
+        "  {} re-signed last {} local trace {}",
+        ok(),
+        take,
+        label
     );
     Ok(())
 }

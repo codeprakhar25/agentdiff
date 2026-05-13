@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand_core::OsRng;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::data::LedgerSig;
 
@@ -18,6 +20,135 @@ pub fn private_key_path() -> Result<PathBuf> {
 
 pub fn public_key_path() -> Result<PathBuf> {
     Ok(keys_dir()?.join("public.key"))
+}
+
+/// `~/.agentdiff/keys/archive/` — rotated key material for audit and verification.
+pub fn archive_dir() -> Result<PathBuf> {
+    Ok(keys_dir()?.join("archive"))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ArchivedKeyMeta {
+    key_id: String,
+    archived_at: DateTime<Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<DateTime<Utc>>,
+}
+
+/// Move the current `private.key` / `public.key` into a timestamped archive folder.
+/// Returns `Ok(None)` if no keys exist on the canonical paths.
+pub fn archive_current_keypair() -> Result<Option<PathBuf>> {
+    let priv_path = private_key_path()?;
+    let pub_path = public_key_path()?;
+    if !priv_path.exists() {
+        return Ok(None);
+    }
+    anyhow::ensure!(
+        pub_path.exists(),
+        "public key missing at {} — cannot archive safely",
+        pub_path.display()
+    );
+
+    let vk = load_verifying_key().context("reading current public key for archive")?;
+    let kid = compute_key_id(&vk);
+
+    let dest = archive_dir()?.join(format!(
+        "{}_{}",
+        Utc::now().format("%Y%m%dT%H%M%SZ"),
+        kid
+    ));
+    std::fs::create_dir_all(&dest)
+        .with_context(|| format!("creating archive dir {}", dest.display()))?;
+
+    let dest_priv = dest.join("private.key");
+    let dest_pub = dest.join("public.key");
+    std::fs::rename(&priv_path, &dest_priv)
+        .with_context(|| format!("archiving private key to {}", dest_priv.display()))?;
+    std::fs::rename(&pub_path, &dest_pub)
+        .with_context(|| format!("archiving public key to {}", dest_pub.display()))?;
+
+    let meta = ArchivedKeyMeta {
+        key_id: kid,
+        archived_at: Utc::now(),
+        expires_at: None,
+    };
+    let meta_path = dest.join("archive.toml");
+    std::fs::write(
+        &meta_path,
+        toml::to_string_pretty(&meta).context("serializing archive metadata")?,
+    )
+    .with_context(|| format!("writing {}", meta_path.display()))?;
+
+    Ok(Some(dest))
+}
+
+/// Load a verifying key from the local archive when the git registry has no entry yet.
+pub fn try_load_archived_verifying_key(key_id: &str) -> Result<Option<VerifyingKey>> {
+    let root = match archive_dir() {
+        Ok(p) => p,
+        Err(_) => return Ok(None),
+    };
+    if !root.is_dir() {
+        return Ok(None);
+    }
+
+    let now = Utc::now();
+    for entry in std::fs::read_dir(&root).with_context(|| format!("reading {}", root.display()))? {
+        let entry = entry.context("archive dir entry")?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let meta_path = path.join("archive.toml");
+        let (meta_kid, expired) = if meta_path.is_file() {
+            let raw = std::fs::read_to_string(&meta_path).unwrap_or_default();
+            let meta: ArchivedKeyMeta = match toml::from_str(&raw) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let expired = meta
+                .expires_at
+                .is_some_and(|ex| ex < now);
+            (meta.key_id, expired)
+        } else {
+            // Legacy folder: infer from public.key only.
+            (String::new(), false)
+        };
+
+        if !meta_kid.is_empty() && meta_kid != key_id {
+            continue;
+        }
+        if expired {
+            continue;
+        }
+
+        let pub_path = path.join("public.key");
+        if !pub_path.is_file() {
+            continue;
+        }
+
+        let vk = read_verifying_key_file(&pub_path)?;
+        let kid = compute_key_id(&vk);
+        if kid != key_id {
+            continue;
+        }
+        return Ok(Some(vk));
+    }
+
+    Ok(None)
+}
+
+fn read_verifying_key_file(path: &Path) -> Result<VerifyingKey> {
+    let b64 = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read public key at {}", path.display()))?;
+    let bytes = STANDARD
+        .decode(b64.trim())
+        .context("cannot base64-decode archived public key")?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("archived public key must be 32 bytes"))?;
+    VerifyingKey::from_bytes(&arr).context("invalid ed25519 public key in archive")
 }
 
 /// Generate and persist a new ed25519 keypair.

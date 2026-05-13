@@ -72,7 +72,7 @@ fn main() -> anyhow::Result<()> {
         Command::Keys(args) => match args.action {
             cli::KeysAction::Init => commands::keys::run_init(),
             cli::KeysAction::Register => commands::keys::run_register(&store),
-            cli::KeysAction::Rotate => commands::keys::run_rotate(&store),
+            cli::KeysAction::Rotate(args) => commands::keys::run_rotate(&store, &args),
         },
         Command::Verify(args) => commands::verify::run(&store, &args),
         Command::Policy(args) => commands::policy::run(&store, &args.action),

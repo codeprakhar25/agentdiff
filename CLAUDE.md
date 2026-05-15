@@ -1,8 +1,5 @@
 # agentdiff — Project Context for Claude
 
-## Role
-Work on this as a senior engineer. The bar is production quality: correct attribution logic, no edge-case misattribution, clean diffs. Argue when you think a direction is wrong, but ship it working.
-
 ## Project summary
 `agentdiff` is a Rust + Python CLI that tracks which AI agent (claude-code, cursor, opencode, copilot, etc.) wrote which lines of code in a git repo. It hooks into agent tool callbacks, captures to `session.jsonl`, then on commit runs `prepare-ledger.py` → `finalize-ledger.py` to produce signed `AgentTrace` records in `.git/agentdiff/traces/{branch}.jsonl`.
 
@@ -18,8 +15,3 @@ Work on this as a senior engineer. The bar is production quality: correct attrib
 - Files with no session evidence → `agent = "human"`, must be explicit in attribution dict
 - `agent = "human"` in payload is the semantic token; `git_author` holds the display name
 - `contributor.type = "human"` iff `file_agent == "human"` — never infer from tool name
-
-## Key gotchas learned the hard way
-- Scripts installed to `~/.agentdiff/scripts/` must be manually synced after edits: `cp scripts/*.py ~/.agentdiff/scripts/`
-- `load_entries()` in store.rs must NOT load session.jsonl — only traces; uncommitted path uses `load_uncommitted_entries()`
-- Configure steps must check directory existence (e.g. `~/.cursor/`), not config file existence — create the file if absent

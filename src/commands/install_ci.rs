@@ -32,6 +32,11 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
+      - name: Configure git identity
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
       - name: Consolidate traces
         run: |
           BRANCH="${{ github.head_ref }}"

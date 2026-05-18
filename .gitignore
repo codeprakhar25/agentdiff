@@ -6,3 +6,6 @@ __pycache__
 .codex
 plans/
 TODOS.md
+experiments/
+assets/
+.relay/

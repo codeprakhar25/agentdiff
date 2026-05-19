@@ -280,3 +280,182 @@ describe('Extension: deactivate', () => {
         assert.doesNotThrow(() => ext.deactivate());
     });
 });
+
+describe('Extension: confidence metadata', () => {
+    /**
+     * Intercept fireCapture by stubbing fs.existsSync and cp.spawn so we can
+     * inspect the payload without spawning a real Python process.
+     */
+    function activateWithCaptureInterceptor(vscode) {
+        // Load the extension module fresh
+        const ext = loadExtension(vscode);
+
+        // We capture payloads by monkey-patching the module's internal spawn.
+        // The extension reads CAPTURE_SCRIPT at runtime; make it look like it exists
+        // by patching fs.existsSync for the '__AGENTDIFF_CAPTURE_COPILOT__' path.
+        const captured = [];
+        const origExistsSync = require('fs').existsSync;
+        require('fs').existsSync = (p) => {
+            if (p === '__AGENTDIFF_CAPTURE_COPILOT__') return true;
+            return origExistsSync(p);
+        };
+
+        const cp = require('child_process');
+        const origSpawn = cp.spawn;
+        cp.spawn = (_cmd, _args, _opts) => {
+            // Return a fake child process that captures what was written to stdin.
+            let written = '';
+            const fakeStdin = {
+                write: (data) => { written += data; },
+                end: () => {
+                    try { captured.push(JSON.parse(written)); } catch (_) {}
+                },
+            };
+            return { stdin: fakeStdin, on: () => {} };
+        };
+
+        // Also stub findRepoRoot (cp.exec) so it resolves synchronously
+        const origExec = cp.exec;
+        cp.exec = (_cmd, _opts, cb) => cb(null, '/tmp/repo');
+
+        // Stub getCopilotModel (vscode.lm)
+        vscode.lm = { selectChatModels: async () => [] };
+
+        const ctx = { subscriptions: vscode._subscriptions };
+        ext.activate(ctx);
+
+        function restore() {
+            require('fs').existsSync = origExistsSync;
+            cp.spawn = origSpawn;
+            cp.exec = origExec;
+        }
+
+        return { ext, vscode, captured, restore };
+    }
+
+    test('heuristic onDidChangeTextDocument capture has confidence="low" and capture_mode="inline_heuristic"', async (t) => {
+        const vscode = makeVscodeMock();
+        const { captured, restore } = activateWithCaptureInterceptor(vscode);
+
+        try {
+            // Fire a large insertion to trigger the heuristic path
+            const bigText = 'x'.repeat(60);
+            vscode._fire.change(makeChangeEvent('/tmp/repo/src/main.rs', [{ text: bigText }]));
+
+            // Wait for the 2-second debounce to fire (use a short flush trick).
+            // We can't easily fast-forward timers in node:test without a library,
+            // so we instead rely on the save-flush path (no timer).
+            vscode._fire.save({ uri: { scheme: 'file', fsPath: '/tmp/repo/src/main.rs' } });
+
+            // Give the async captureFile call time to resolve
+            await new Promise((r) => setTimeout(r, 100));
+
+            assert.ok(captured.length > 0, 'Expected at least one capture payload');
+            const payload = captured[captured.length - 1];
+            assert.equal(payload.confidence, 'low', `Expected confidence="low", got ${payload.confidence}`);
+            // save-flush sets capture_mode to "save_flush"
+            assert.ok(
+                payload.capture_mode === 'save_flush' || payload.capture_mode === 'inline_heuristic',
+                `Expected save_flush or inline_heuristic, got ${payload.capture_mode}`
+            );
+        } finally {
+            restore();
+        }
+    });
+
+    test('captureNow command produces confidence="high" and capture_mode="manual"', async (t) => {
+        const vscode = makeVscodeMock();
+        const { captured, restore } = activateWithCaptureInterceptor(vscode);
+
+        try {
+            // Set up a fake active editor
+            vscode.window.activeTextEditor = {
+                document: {
+                    uri: { fsPath: '/tmp/repo/src/main.rs' },
+                    lineCount: 5,
+                },
+            };
+
+            await vscode._commands['agentdiff.captureNow']();
+
+            // Give the async captureFile call time to resolve
+            await new Promise((r) => setTimeout(r, 100));
+
+            assert.ok(captured.length > 0, 'Expected at least one capture payload from captureNow');
+            const payload = captured[captured.length - 1];
+            assert.equal(payload.confidence, 'high', `Expected confidence="high", got ${payload.confidence}`);
+            assert.equal(payload.capture_mode, 'manual', `Expected capture_mode="manual", got ${payload.capture_mode}`);
+            assert.equal(payload.event, 'manual', `Expected event="manual", got ${payload.event}`);
+        } finally {
+            restore();
+        }
+    });
+});
+
+describe('Extension: stable window session ID', () => {
+    test('session_id is consistent across multiple captures in same window', async (t) => {
+        const vscode = makeVscodeMock();
+
+        const captured = [];
+        const origExistsSync = require('fs').existsSync;
+        require('fs').existsSync = (p) => {
+            if (p === '__AGENTDIFF_CAPTURE_COPILOT__') return true;
+            return origExistsSync(p);
+        };
+        const cp = require('child_process');
+        const origSpawn = cp.spawn;
+        cp.spawn = (_cmd, _args, _opts) => {
+            let written = '';
+            const fakeStdin = {
+                write: (data) => { written += data; },
+                end: () => {
+                    try { captured.push(JSON.parse(written)); } catch (_) {}
+                },
+            };
+            return { stdin: fakeStdin, on: () => {} };
+        };
+        const origExec = cp.exec;
+        cp.exec = (_cmd, _opts, cb) => cb(null, '/tmp/repo');
+        vscode.lm = { selectChatModels: async () => [] };
+
+        const ext = loadExtension(vscode);
+        const ctx = { subscriptions: vscode._subscriptions };
+        ext.activate(ctx);
+
+        try {
+            // Trigger captureNow twice
+            vscode.window.activeTextEditor = {
+                document: {
+                    uri: { fsPath: '/tmp/repo/a.rs' },
+                    lineCount: 3,
+                },
+            };
+            await vscode._commands['agentdiff.captureNow']();
+
+            vscode.window.activeTextEditor = {
+                document: {
+                    uri: { fsPath: '/tmp/repo/b.rs' },
+                    lineCount: 2,
+                },
+            };
+            await vscode._commands['agentdiff.captureNow']();
+
+            await new Promise((r) => setTimeout(r, 100));
+
+            assert.ok(captured.length >= 2, `Expected >=2 captures, got ${captured.length}`);
+            const ids = captured.map((p) => p.session_id);
+            assert.equal(
+                ids[0], ids[1],
+                `session_id must be stable within a window: got ${ids[0]} vs ${ids[1]}`
+            );
+            assert.ok(
+                ids[0].startsWith('vscode-'),
+                `session_id should start with "vscode-", got ${ids[0]}`
+            );
+        } finally {
+            require('fs').existsSync = origExistsSync;
+            cp.spawn = origSpawn;
+            cp.exec = origExec;
+        }
+    });
+});

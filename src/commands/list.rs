@@ -60,11 +60,25 @@ pub fn run(store: &Store, args: &ListArgs) -> Result<()> {
             if sha.len() > 8 { &sha[..8] } else { sha }
         };
         let meta = t.agentdiff_metadata();
-        let trust = meta
+        let trust_base = meta
             .as_ref()
             .and_then(|m| m.trust)
             .map(|t| t.to_string())
             .unwrap_or_else(|| "—".to_string());
+        // Append ~cpl when low-confidence Copilot heuristic captures were
+        // present at commit time.  This signals the reviewer that copilot
+        // activity was detected but could not be reliably attributed.
+        let has_low_conf_cpl = meta
+            .as_ref()
+            .and_then(|m| m.copilot_context.as_ref())
+            .and_then(|ctx| ctx.get("low_confidence"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let trust = if has_low_conf_cpl {
+            format!("{trust_base} ~cpl")
+        } else {
+            trust_base
+        };
         let prompt_text = meta
             .as_ref()
             .and_then(|m| m.prompt_excerpt.clone())

@@ -198,6 +198,73 @@ def read_events_per_file(
     return {fp: ev for fp, (_, ev) in best.items()}
 
 
+def read_copilot_context(
+    path: str,
+    min_ts: int,
+) -> dict:
+    """Collect copilot events from session.jsonl for usage context.
+
+    Copilot is excluded from per-file attribution (see _EXCLUDED_AGENTS) but
+    its events are still captured in session.jsonl for statistics.  This
+    function summarises them into a ``copilot_context`` dict that is stored in
+    the pending ledger and eventually in the AgentTrace metadata so that
+    ``agentdiff list`` and ``agentdiff report`` can surface a warning when
+    low-confidence heuristic captures were present at commit time.
+
+    Returns an empty dict when there are no copilot events since ``min_ts``.
+    """
+    if not os.path.exists(path):
+        return {}
+
+    event_count = 0
+    has_low_confidence = False
+    files_seen: List[str] = []
+    total_lines = 0
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except Exception:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if str(event.get("agent") or "") != "copilot":
+                    continue
+                event_ts = parse_event_ts(str(event.get("timestamp") or ""))
+                if event_ts < min_ts:
+                    continue
+
+                event_count += 1
+                confidence = str(event.get("confidence") or "low")
+                if confidence != "high":
+                    has_low_confidence = True
+
+                file_path = str(event.get("file") or "").strip()
+                if file_path and file_path not in files_seen:
+                    files_seen.append(file_path)
+
+                lines = event.get("lines")
+                if isinstance(lines, list):
+                    total_lines += len(lines)
+    except Exception:
+        return {}
+
+    if event_count == 0:
+        return {}
+
+    return {
+        "events": event_count,
+        "low_confidence": has_low_confidence,
+        "files": files_seen,
+        "lines": total_lines,
+    }
+
+
 def dominant_event(events_by_file: Dict[str, dict], lines_by_file: Dict[str, List[Tuple[int, int]]]) -> dict:
     """Pick the agent/model to use as the top-level record field.
 
@@ -276,12 +343,14 @@ def main() -> int:
     if not isinstance(pending, dict):
         pending = {}
 
+    commit_ts = head_commit_ts(repo_root)
     events_by_file = read_events_per_file(
         session_log,
         files_touched,
-        head_commit_ts(repo_root),
+        commit_ts,
         lines_by_file,
     )
+    copilot_context = read_copilot_context(session_log, commit_ts)
 
     # Top-level agent/model/session come from the dominant event (most lines written)
     event = dominant_event(events_by_file, lines_by_file) or {}
@@ -366,6 +435,8 @@ def main() -> int:
         payload["intent"] = intent
     if trust is not None:
         payload["trust"] = trust
+    if copilot_context:
+        payload["copilot_context"] = copilot_context
 
     parent = os.path.dirname(pending_ledger_path)
     if parent:

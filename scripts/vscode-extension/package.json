@@ -13,6 +13,10 @@
       {
         "command": "agentdiff.captureNow",
         "title": "agentdiff: Capture Copilot edits for current file"
+      },
+      {
+        "command": "agentdiff.openLogs",
+        "title": "agentdiff: Open Logs"
       }
     ]
   }

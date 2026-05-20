@@ -38,25 +38,21 @@ agentdiff list
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash
+curl -fsSL https://agentdiff.site/install | sh
 ```
 
-**Requirements:** Python 3.7+ on PATH, Git 2.20+
+**Requirements:** Python 3.7+ on PATH, Git 2.20+, Rust 1.85+ (installed automatically if missing)
 
 <details>
 <summary>Other install methods</summary>
 
 ```bash
-# Specific version
-curl -fsSL https://raw.githubusercontent.com/codeprakhar25/agentdiff/main/install.sh | bash -s -- --version v0.1.0
-
-# From source (requires Rust 1.85+)
+# From source manually (requires Rust 1.85+)
 git clone https://github.com/codeprakhar25/agentdiff.git
 cd agentdiff
 cargo build --release
 mkdir -p ~/.local/bin
 install -m 0755 target/release/agentdiff ~/.local/bin/agentdiff
-install -m 0755 target/release/agentdiff-mcp ~/.local/bin/agentdiff-mcp
 ```
 
 </details>

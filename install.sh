@@ -123,11 +123,30 @@ fi
 tar -xzf "${tmp}/${asset}" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "${tmp}/agentdiff" "${INSTALL_DIR}/agentdiff"
-install -m 0755 "${tmp}/agentdiff-mcp" "${INSTALL_DIR}/agentdiff-mcp"
+if [[ -f "${tmp}/agentdiff-mcp" ]]; then
+  install -m 0755 "${tmp}/agentdiff-mcp" "${INSTALL_DIR}/agentdiff-mcp"
+fi
 
-echo "Installed:"
-echo "  ${INSTALL_DIR}/agentdiff"
-echo "  ${INSTALL_DIR}/agentdiff-mcp"
+SCRIPTS_SRC="${tmp}/scripts"
+SCRIPTS_DST="${HOME}/.agentdiff/scripts"
+if [[ -d "$SCRIPTS_SRC" ]] && compgen -G "${SCRIPTS_SRC}/*.py" > /dev/null 2>&1; then
+  mkdir -p "$SCRIPTS_DST"
+  cp "${SCRIPTS_SRC}"/*.py "$SCRIPTS_DST/"
+  echo "Capture scripts installed → ${SCRIPTS_DST}/"
+else
+  echo "Note: capture scripts not bundled in this release."
+  echo "Run 'agentdiff configure' to fetch them, or install from source."
+fi
+
 echo
-echo "If needed, add to PATH:"
-echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+echo "Installed: ${INSTALL_DIR}/agentdiff $(${INSTALL_DIR}/agentdiff --version 2>/dev/null || true)"
+echo
+echo "Next steps:"
+echo "  1. cd your-git-repo"
+echo "  2. agentdiff configure      — installs git hooks"
+echo "  3. agentdiff.site           — install the GitHub App"
+echo
+if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
+  echo "Add to PATH if needed:"
+  echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+fi

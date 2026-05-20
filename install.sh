@@ -1,25 +1,11 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
 REPO="${AGENTDIFF_REPO:-codeprakhar25/agentdiff}"
 INSTALL_DIR="${AGENTDIFF_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${AGENTDIFF_VERSION:-}"
 
-usage() {
-  cat <<'EOF'
-Install agentdiff and agentdiff-mcp from GitHub Releases.
-
-Usage:
-  install.sh [--version vX.Y.Z] [--dir /install/path]
-
-Environment:
-  AGENTDIFF_REPO        GitHub repo (default: codeprakhar25/agentdiff)
-  AGENTDIFF_INSTALL_DIR Install directory (default: ~/.local/bin)
-  AGENTDIFF_VERSION     Release tag (default: latest)
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
+while [ $# -gt 0 ]; do
   case "$1" in
     --version)
       VERSION="${2:-}"
@@ -30,12 +16,15 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      usage
+      echo "Install agentdiff from GitHub Releases."
+      echo ""
+      echo "Usage: install.sh [--version vX.Y.Z] [--dir /install/path]"
+      echo ""
+      echo "Env: AGENTDIFF_REPO, AGENTDIFF_INSTALL_DIR, AGENTDIFF_VERSION"
       exit 0
       ;;
     *)
       echo "Unknown argument: $1" >&2
-      usage
       exit 2
       ;;
   esac
@@ -55,7 +44,7 @@ os="$(uname -s)"
 arch="$(uname -m)"
 
 case "$os" in
-  Linux) os_part="unknown-linux-gnu" ;;
+  Linux)  os_part="unknown-linux-gnu" ;;
   Darwin) os_part="apple-darwin" ;;
   *)
     echo "Unsupported OS: $os" >&2
@@ -73,20 +62,12 @@ case "$arch" in
 esac
 
 target="${arch_part}-${os_part}"
-case "$target" in
-  x86_64-unknown-linux-gnu|x86_64-apple-darwin|aarch64-apple-darwin)
-    ;;
-  *)
-    echo "No prebuilt artifact configured for target: $target" >&2
-    exit 1
-    ;;
-esac
 
 api_base="https://api.github.com/repos/${REPO}/releases"
 
-if [[ -z "$VERSION" ]]; then
+if [ -z "$VERSION" ]; then
   VERSION="$(curl -fsSL "${api_base}/latest" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-  if [[ -z "$VERSION" ]]; then
+  if [ -z "$VERSION" ]; then
     echo "Unable to resolve latest release tag for ${REPO}" >&2
     exit 1
   fi
@@ -99,22 +80,25 @@ download_base="https://github.com/${REPO}/releases/download/${VERSION}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-echo "Installing ${REPO} ${VERSION} for ${target}"
+echo "Installing ${REPO} ${VERSION} for ${target}..."
 curl -fL --retry 3 --retry-delay 1 -o "${tmp}/${asset}" "${download_base}/${asset}"
 curl -fL --retry 3 --retry-delay 1 -o "${tmp}/${checksums}" "${download_base}/${checksums}"
 
 line="$(grep " ${asset}\$" "${tmp}/${checksums}" || true)"
-if [[ -z "$line" ]]; then
+if [ -z "$line" ]; then
   echo "Checksum for ${asset} not found in ${checksums}" >&2
   exit 1
 fi
 
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd "$tmp" && echo "$line" | sha256sum -c - >/dev/null)
+  (cd "$tmp" && printf '%s\n' "$line" | sha256sum -c - >/dev/null)
 elif command -v shasum >/dev/null 2>&1; then
-  expected="$(echo "$line" | awk '{print $1}')"
+  expected="$(printf '%s\n' "$line" | awk '{print $1}')"
   actual="$(shasum -a 256 "${tmp}/${asset}" | awk '{print $1}')"
-  [[ "$expected" == "$actual" ]]
+  if [ "$expected" != "$actual" ]; then
+    echo "Checksum mismatch for ${asset}" >&2
+    exit 1
+  fi
 else
   echo "Missing sha256 verifier (need sha256sum or shasum)" >&2
   exit 1
@@ -123,30 +107,33 @@ fi
 tar -xzf "${tmp}/${asset}" -C "$tmp"
 mkdir -p "$INSTALL_DIR"
 install -m 0755 "${tmp}/agentdiff" "${INSTALL_DIR}/agentdiff"
-if [[ -f "${tmp}/agentdiff-mcp" ]]; then
+if [ -f "${tmp}/agentdiff-mcp" ]; then
   install -m 0755 "${tmp}/agentdiff-mcp" "${INSTALL_DIR}/agentdiff-mcp"
 fi
 
 SCRIPTS_SRC="${tmp}/scripts"
 SCRIPTS_DST="${HOME}/.agentdiff/scripts"
-if [[ -d "$SCRIPTS_SRC" ]] && compgen -G "${SCRIPTS_SRC}/*.py" > /dev/null 2>&1; then
+if [ -d "$SCRIPTS_SRC" ] && ls "${SCRIPTS_SRC}"/*.py >/dev/null 2>&1; then
   mkdir -p "$SCRIPTS_DST"
   cp "${SCRIPTS_SRC}"/*.py "$SCRIPTS_DST/"
-  echo "Capture scripts installed → ${SCRIPTS_DST}/"
+  echo "Capture scripts installed -> ${SCRIPTS_DST}/"
 else
   echo "Note: capture scripts not bundled in this release."
-  echo "Run 'agentdiff configure' to fetch them, or install from source."
+  echo "Run 'agentdiff configure' to fetch them."
 fi
 
-echo
-echo "Installed: ${INSTALL_DIR}/agentdiff $(${INSTALL_DIR}/agentdiff --version 2>/dev/null || true)"
-echo
+echo ""
+echo "Installed: ${INSTALL_DIR}/agentdiff $("${INSTALL_DIR}/agentdiff" --version 2>/dev/null || echo '')"
+echo ""
 echo "Next steps:"
 echo "  1. cd your-git-repo"
-echo "  2. agentdiff configure      — installs git hooks"
-echo "  3. agentdiff.site           — install the GitHub App"
-echo
-if [[ ":${PATH}:" != *":${INSTALL_DIR}:"* ]]; then
-  echo "Add to PATH if needed:"
-  echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
-fi
+echo "  2. agentdiff configure      -- installs git hooks"
+echo "  3. agentdiff.site           -- install the GitHub App"
+echo ""
+case ":${PATH}:" in
+  *":${INSTALL_DIR}:"*) ;;
+  *)
+    echo "Add to PATH if needed:"
+    echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+    ;;
+esac

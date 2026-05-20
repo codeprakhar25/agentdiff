@@ -64,6 +64,11 @@ jobs:
             target: aarch64-apple-darwin
             ext: ""
             archive: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            ext: ""
+            archive: tar.gz
+            use_cross: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             ext: ".exe"
@@ -78,8 +83,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross (arm64 Linux only)
+        if: matrix.use_cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build release binaries
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [[ "${{ matrix.use_cross }}" == "true" ]]; then
+            cross build --release --locked --target ${{ matrix.target }}
+          else
+            cargo build --release --locked --target ${{ matrix.target }}
+          fi
 
       - name: Package unix artifacts
         if: matrix.archive == 'tar.gz'
@@ -87,9 +102,10 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
-          mkdir -p dist/package
+          mkdir -p dist/package/scripts
           cp "target/${{ matrix.target }}/release/agentdiff${{ matrix.ext }}" dist/package/
-          cp "target/${{ matrix.target }}/release/agentdiff-mcp${{ matrix.ext }}" dist/package/
+          cp "target/${{ matrix.target }}/release/agentdiff-mcp${{ matrix.ext }}" dist/package/ 2>/dev/null || true
+          cp scripts/*.py dist/package/scripts/
           tar -C dist/package -czf "dist/agentdiff-${VERSION}-${{ matrix.target }}.tar.gz" .
 
       - name: Package windows artifacts

@@ -63,6 +63,37 @@ def remove_if_exists(path: str) -> None:
         pass
 
 
+def remove_consumed_intents(session_path: str) -> None:
+    """Strip type=intent events from session.jsonl after they've been committed.
+
+    Intent events are one-shot: set_intent is called just before a commit, so
+    by the time finalize runs they've been consumed. Leaving them causes stale
+    intent to bleed into the next commit when two commits share the same second.
+    """
+    if not os.path.exists(session_path):
+        return
+    try:
+        kept = []
+        with open(session_path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    if isinstance(event, dict) and event.get("type") == "intent":
+                        continue
+                except Exception:
+                    pass
+                kept.append(raw if raw.endswith("\n") else raw + "\n")
+        tmp = session_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.writelines(kept)
+        os.replace(tmp, session_path)
+    except Exception:
+        pass
+
+
 def sha_already_recorded(traces_path: str, sha: str) -> bool:
     """Skip finalize if this commit already has a trace recorded locally."""
     if not os.path.exists(traces_path):
@@ -158,6 +189,8 @@ def write_agent_trace(repo_root: str, pending: dict, sha: str, ts: str) -> Optio
         metadata["session_id"] = str(pending["session_id"])
     if pending.get("intent"):
         metadata["intent"] = str(pending["intent"])
+    if pending.get("intent_type"):
+        metadata["intent_type"] = str(pending["intent_type"])
     if isinstance(pending.get("files_read"), list) and pending["files_read"]:
         metadata["files_read"] = [str(p) for p in pending["files_read"]]
     if git_author:
@@ -228,9 +261,12 @@ def main() -> int:
         return 1
     ts = ts_res.stdout.strip()
 
+    session_path = os.path.join(repo_root, ".git", "agentdiff", "session.jsonl")
     result = write_agent_trace(repo_root, pending, sha, ts)
     remove_if_exists(pending_ledger_path)
     remove_if_exists(pending_context_path)
+    if result is not None:
+        remove_consumed_intents(session_path)
     return 0 if result is not None else 1
 
 

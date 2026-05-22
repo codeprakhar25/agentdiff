@@ -64,6 +64,9 @@ def main() -> int:
     parser.add_argument("--prompt", default="")
     parser.add_argument("--files-read", default="")
     parser.add_argument("--intent", default="")
+    parser.add_argument("--intent-type", default="",
+                        choices=["bugfix","feature","refactor","test","docs",
+                                 "security","performance","config","dependency",""])
     parser.add_argument("--trust", type=int, default=None)
     parser.add_argument("--flags", default="")
     args = parser.parse_args()
@@ -90,6 +93,7 @@ def main() -> int:
         "prompt": args.prompt or str(payload.get("prompt") or ""),
         "files_read": parse_json_array(args.files_read) or payload.get("files_read") or [],
         "intent": args.intent or str(payload.get("intent") or ""),
+        "intent_type": args.intent_type or str(payload.get("intent_type") or ""),
         "flags": parse_json_array(args.flags) or payload.get("flags") or [],
     }
 

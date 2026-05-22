@@ -198,6 +198,41 @@ def read_events_per_file(
     return {fp: ev for fp, (_, ev) in best.items()}
 
 
+def read_intent_events(
+    path: str,
+    min_ts: int,
+) -> List[dict]:
+    """Read intent events from session.jsonl (type=intent, written by set_intent MCP tool).
+
+    Returns all matching intent events sorted by timestamp (most recent last).
+    """
+    if not os.path.exists(path):
+        return []
+    results = []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw in f:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") != "intent":
+                    continue
+                event_ts = parse_event_ts(str(event.get("timestamp") or ""))
+                if event_ts < min_ts:
+                    continue
+                results.append(event)
+    except Exception:
+        pass
+    results.sort(key=lambda e: parse_event_ts(str(e.get("timestamp") or "")))
+    return results
+
+
 def dominant_event(events_by_file: Dict[str, dict], lines_by_file: Dict[str, List[Tuple[int, int]]]) -> dict:
     """Pick the agent/model to use as the top-level record field.
 
@@ -276,12 +311,16 @@ def main() -> int:
     if not isinstance(pending, dict):
         pending = {}
 
+    min_ts = head_commit_ts(repo_root)
     events_by_file = read_events_per_file(
         session_log,
         files_touched,
-        head_commit_ts(repo_root),
+        min_ts,
         lines_by_file,
     )
+
+    # Read agent-stated intent events from session.jsonl (written by set_intent MCP tool)
+    intent_events = read_intent_events(session_log, min_ts)
 
     # Top-level agent/model/session come from the dominant event (most lines written)
     event = dominant_event(events_by_file, lines_by_file) or {}
@@ -307,9 +346,31 @@ def main() -> int:
         flags = []
     flags = [str(f) for f in flags]
 
-    intent = pending.get("intent")
-    if intent is not None:
-        intent = str(intent)
+    # Intent priority: agent-stated intent event > pending context > fallback
+    intent = None
+    intent_type = None
+    if intent_events:
+        # Use the most recent intent event (prefer matching session, else latest)
+        best_intent = None
+        if session_id and session_id != "unknown":
+            for ie in reversed(intent_events):
+                if str(ie.get("session_id") or "") == session_id:
+                    best_intent = ie
+                    break
+        if not best_intent:
+            best_intent = intent_events[-1]
+        intent = str(best_intent.get("description") or "").strip() or None
+        intent_type = str(best_intent.get("intent_type") or "").strip() or None
+
+    if not intent:
+        raw = pending.get("intent")
+        if raw is not None:
+            intent = str(raw).strip() or None
+
+    if not intent_type:
+        raw = pending.get("intent_type")
+        if raw is not None:
+            intent_type = str(raw).strip() or None
 
     # Per-file attribution — each file maps to the agent/model that wrote it.
     # Files with a session event that matches the dominant agent are omitted (finalize
@@ -364,6 +425,8 @@ def main() -> int:
         payload["attribution"] = attribution
     if intent:
         payload["intent"] = intent
+    if intent_type:
+        payload["intent_type"] = intent_type
     if trust is not None:
         payload["trust"] = trust
 

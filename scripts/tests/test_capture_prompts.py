@@ -208,6 +208,53 @@ class FinalizeCapturePropmptsEnabledTests(unittest.TestCase):
             self.assertEqual(metadata["author"], "Prakhar")
             self.assertEqual(metadata["capture_tool"], "afterFileEdit")
 
+    def test_write_agent_trace_persists_intent_type(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+            (repo / "README.md").write_text("test\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+            pending = {
+                "agent": "cursor",
+                "git_author": "Prakhar",
+                "model": "cursor-test",
+                "session_id": "sess-2",
+                "lines": {"src/app.py": [[1, 5]]},
+                "prompt_excerpt": "extract auth middleware",
+                "prompt_hash": "def456",
+                "intent": "eliminate duplicate token validation across route handlers",
+                "intent_type": "refactor",
+                "files_read": [],
+                "trust": 85,
+                "flags": [],
+                "tool": "afterFileEdit",
+            }
+
+            original = os.environ.get("HOME")
+            try:
+                os.environ["HOME"] = tmp
+                traces_path = self.mod.write_agent_trace(
+                    str(repo), pending, "cafebabe", "2026-05-21T00:00:00Z"
+                )
+            finally:
+                if original is not None:
+                    os.environ["HOME"] = original
+
+            self.assertIsNotNone(traces_path)
+            raw = Path(traces_path).read_text(encoding="utf-8").strip()
+            trace = json.loads(raw)
+            metadata = trace["metadata"]["agentdiff"]
+            self.assertEqual(metadata["intent_type"], "refactor")
+            self.assertEqual(
+                metadata["intent"],
+                "eliminate duplicate token validation across route handlers",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,6 +38,8 @@ jobs:
           git config user.name "github-actions[bot]"
 
       - name: Consolidate traces
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           BRANCH="${{ github.head_ref }}"
           agentdiff consolidate --branch "$BRANCH" --push

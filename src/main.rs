@@ -14,10 +14,10 @@ use cli::{Cli, Command};
 use config::Config;
 
 fn main() -> anyhow::Result<()> {
-    // Suppress broken pipe errors (e.g. `agentdiff export | head`).
+    // Suppress broken pipe errors (e.g. `agentdiff list | head`).
     #[cfg(unix)]
     unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
     let cli = Cli::parse();
 

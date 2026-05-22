@@ -28,7 +28,10 @@ fn managed_block() -> String {
          \n\
          ### Before committing\n\
          \n\
-         Let the git hooks run — do **not** bypass them with `--no-verify`. The \
+         1. Call the `set_intent` MCP tool with a 1-2 sentence description of **why** \
+         you made these changes (not what you changed). Include an `intent_type` from: \
+         bugfix, feature, refactor, test, docs, security, performance, config, dependency.\n\
+         2. Let the git hooks run — do **not** bypass them with `--no-verify`. The \
          `pre-commit` hook computes per-file attribution, and the `post-commit` hook \
          signs and stores the trace. Skipping either breaks the attribution ledger.\n\
          \n\

@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
-const TOOL_NAME: &str = "record_context";
+const TOOL_RECORD_CONTEXT: &str = "record_context";
+const TOOL_SET_INTENT: &str = "set_intent";
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -22,6 +23,16 @@ struct RecordContextArgs {
     intent: Option<String>,
     trust: Option<i32>,
     flags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+struct SetIntentArgs {
+    description: Option<String>,
+    intent_type: Option<String>,
+    session_id: Option<String>,
+    agent: Option<String>,
+    cwd: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -117,7 +128,9 @@ fn handle_request(request: &Value, default_cwd: &Path) -> Option<Value> {
         }
         "notifications/initialized" => None,
         "ping" => id.map(|rid| response_ok(rid, json!({}))),
-        "tools/list" => id.map(|rid| response_ok(rid, json!({"tools":[tool_definition()]}))),
+        "tools/list" => id.map(|rid| {
+            response_ok(rid, json!({"tools":[record_context_definition(), set_intent_definition()]}))
+        }),
         "tools/call" => id.map(|rid| {
             let name = request
                 .get("params")
@@ -125,48 +138,72 @@ fn handle_request(request: &Value, default_cwd: &Path) -> Option<Value> {
                 .and_then(Value::as_str)
                 .unwrap_or("");
 
-            if name != TOOL_NAME {
-                return response_error(rid, -32601, format!("unknown tool: {name}"));
-            }
-
             let raw_args = request
                 .get("params")
                 .and_then(|p| p.get("arguments"))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
 
-            let args: RecordContextArgs = match serde_json::from_value(raw_args) {
-                Ok(v) => v,
-                Err(err) => {
-                    return response_error(rid, -32602, format!("invalid arguments: {err}"));
-                }
-            };
-
-            match record_context(&args, default_cwd) {
-                Ok(out_path) => response_ok(
-                    rid,
-                    json!({
-                        "content": [{
-                            "type":"text",
-                            "text": format!("recorded context in {}", out_path.display())
-                        }],
-                        "structuredContent": {
-                            "status":"recorded",
-                            "path": out_path.display().to_string(),
-                            "will_attach_on_next_commit": true
+            match name {
+                TOOL_RECORD_CONTEXT => {
+                    let args: RecordContextArgs = match serde_json::from_value(raw_args) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            return response_error(rid, -32602, format!("invalid arguments: {err}"));
                         }
-                    }),
-                ),
-                Err(err) => response_error(rid, -32000, format!("{err:#}")),
+                    };
+                    match record_context(&args, default_cwd) {
+                        Ok(out_path) => response_ok(
+                            rid,
+                            json!({
+                                "content": [{
+                                    "type":"text",
+                                    "text": format!("recorded context in {}", out_path.display())
+                                }],
+                                "structuredContent": {
+                                    "status":"recorded",
+                                    "path": out_path.display().to_string(),
+                                    "will_attach_on_next_commit": true
+                                }
+                            }),
+                        ),
+                        Err(err) => response_error(rid, -32000, format!("{err:#}")),
+                    }
+                }
+                TOOL_SET_INTENT => {
+                    let args: SetIntentArgs = match serde_json::from_value(raw_args) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            return response_error(rid, -32602, format!("invalid arguments: {err}"));
+                        }
+                    };
+                    match set_intent(&args, default_cwd) {
+                        Ok(out_path) => response_ok(
+                            rid,
+                            json!({
+                                "content": [{
+                                    "type":"text",
+                                    "text": format!("intent recorded in {}", out_path.display())
+                                }],
+                                "structuredContent": {
+                                    "status":"recorded",
+                                    "path": out_path.display().to_string()
+                                }
+                            }),
+                        ),
+                        Err(err) => response_error(rid, -32000, format!("{err:#}")),
+                    }
+                }
+                _ => response_error(rid, -32601, format!("unknown tool: {name}")),
             }
         }),
         _ => id.map(|rid| response_error(rid, -32601, format!("method not found: {method}"))),
     }
 }
 
-fn tool_definition() -> Value {
+fn record_context_definition() -> Value {
     json!({
-      "name": TOOL_NAME,
+      "name": TOOL_RECORD_CONTEXT,
       "description": "Record agent session context into .git/agentdiff/pending.json for the next commit.",
       "inputSchema": {
         "type": "object",
@@ -182,6 +219,32 @@ fn tool_definition() -> Value {
           "flags": {"type":"array","items":{"type":"string"}}
         },
         "required": ["prompt","model_id"],
+        "additionalProperties": false
+      }
+    })
+}
+
+fn set_intent_definition() -> Value {
+    json!({
+      "name": TOOL_SET_INTENT,
+      "description": "Record the intent behind your code changes before committing. Call this with a 1-2 sentence description of WHY you made the changes (not what you changed). This is stored in the agent trace and shown in PR comments to help reviewers understand the purpose.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "1-2 sentence description of WHY you made these changes. Focus on the goal/reason, not the mechanics. Example: 'Extract auth middleware into shared module to eliminate duplicate token validation across 3 route handlers'"
+          },
+          "intent_type": {
+            "type": "string",
+            "description": "Category of change",
+            "enum": ["bugfix", "feature", "refactor", "test", "docs", "security", "performance", "config", "dependency"]
+          },
+          "session_id": {"type":"string"},
+          "agent": {"type":"string"},
+          "cwd": {"type":"string"}
+        },
+        "required": ["description"],
         "additionalProperties": false
       }
     })
@@ -238,6 +301,56 @@ fn record_context(args: &RecordContextArgs, default_cwd: &Path) -> Result<PathBu
     Ok(pending_path)
 }
 
+fn set_intent(args: &SetIntentArgs, default_cwd: &Path) -> Result<PathBuf> {
+    let description = args
+        .description
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .context("description is required")?;
+    let description = if description.len() > 500 {
+        &description[..500]
+    } else {
+        description
+    };
+
+    let cwd = args
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| default_cwd.to_path_buf());
+    let repo_root = find_repo_root(&cwd)?;
+
+    let session_path = repo_root
+        .join(".git")
+        .join("agentdiff")
+        .join("session.jsonl");
+    if let Some(parent) = session_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut event = json!({
+        "timestamp": Utc::now().to_rfc3339(),
+        "type": "intent",
+        "agent": args.agent.clone().unwrap_or_else(|| "unknown".to_string()),
+        "session_id": args.session_id.clone().unwrap_or_else(|| "unknown".to_string()),
+        "description": description
+    });
+
+    if let Some(ref intent_type) = args.intent_type {
+        event["intent_type"] = json!(intent_type);
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&session_path)
+        .with_context(|| format!("opening {}", session_path.display()))?;
+    writeln!(file, "{}", event.to_string())
+        .with_context(|| format!("writing to {}", session_path.display()))?;
+
+    Ok(session_path)
+}
+
 fn find_repo_root(cwd: &Path) -> Result<PathBuf> {
     let out = Command::new("git")
         .args(["-C", &cwd.display().to_string(), "rev-parse", "--show-toplevel"])
@@ -287,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn tools_list_includes_record_context() {
+    fn tools_list_includes_both_tools() {
         let req = json!({
           "jsonrpc":"2.0",
           "id":"abc",
@@ -296,8 +409,10 @@ mod tests {
         });
         let resp = handle_request(&req, Path::new(".")).expect("response");
         let tools = resp["result"]["tools"].as_array().expect("tools array");
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0]["name"], TOOL_NAME);
+        assert_eq!(tools.len(), 2);
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(names.contains(&TOOL_RECORD_CONTEXT));
+        assert!(names.contains(&TOOL_SET_INTENT));
     }
 
     #[test]
@@ -334,6 +449,60 @@ mod tests {
         assert_eq!(obj["model_id"], "gpt-5.4");
         assert_eq!(obj["session_id"], "sess_test");
         assert_eq!(obj["trust"], 88);
+    }
+
+    #[test]
+    fn set_intent_writes_to_session_jsonl() {
+        let repo = init_repo();
+        let req = json!({
+          "jsonrpc":"2.0",
+          "id":100,
+          "method":"tools/call",
+          "params":{
+            "name":"set_intent",
+            "arguments":{
+              "cwd": repo.display().to_string(),
+              "description": "Extract auth middleware to fix duplicate validation",
+              "intent_type": "refactor",
+              "session_id": "sess_intent_test",
+              "agent": "cursor"
+            }
+          }
+        });
+
+        let resp = handle_request(&req, Path::new(".")).expect("response");
+        assert!(resp.get("result").is_some(), "expected result, got: {resp}");
+
+        let session_path = repo.join(".git").join("agentdiff").join("session.jsonl");
+        assert!(session_path.exists());
+
+        let content = fs::read_to_string(&session_path).expect("read session.jsonl");
+        let event: Value = serde_json::from_str(content.trim()).expect("parse event");
+        assert_eq!(event["type"], "intent");
+        assert_eq!(event["description"], "Extract auth middleware to fix duplicate validation");
+        assert_eq!(event["intent_type"], "refactor");
+        assert_eq!(event["agent"], "cursor");
+        assert_eq!(event["session_id"], "sess_intent_test");
+    }
+
+    #[test]
+    fn set_intent_requires_description() {
+        let repo = init_repo();
+        let req = json!({
+          "jsonrpc":"2.0",
+          "id":101,
+          "method":"tools/call",
+          "params":{
+            "name":"set_intent",
+            "arguments":{
+              "cwd": repo.display().to_string(),
+              "description": ""
+            }
+          }
+        });
+
+        let resp = handle_request(&req, Path::new(".")).expect("response");
+        assert!(resp.get("error").is_some());
     }
 
     #[test]

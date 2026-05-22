@@ -412,6 +412,7 @@ fn markdown_report(entries: &[Entry]) -> Result<String> {
 #[derive(Default)]
 struct ContextGroup {
     intent: String,
+    intent_type: Option<String>,
     lines: usize,
     files: HashSet<String>,
     agents: HashSet<String>,
@@ -451,6 +452,10 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
             .and_then(|m| m.intent.clone())
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "unspecified".to_string());
+        let intent_type = meta
+            .as_ref()
+            .and_then(|m| m.intent_type.clone())
+            .filter(|s| !s.trim().is_empty());
         let line_count = trace_line_count(trace);
         total_lines += line_count;
         *agent_counts.entry(agent.clone()).or_default() += line_count;
@@ -459,8 +464,12 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
             .entry(intent.clone())
             .or_insert_with(|| ContextGroup {
                 intent: intent.clone(),
+                intent_type: intent_type.clone(),
                 ..Default::default()
             });
+        if group.intent_type.is_none() && intent_type.is_some() {
+            group.intent_type = intent_type;
+        }
         group.lines += line_count;
         group.agents.insert(agent.clone());
         group.trace_ids.push(short_id(&trace.id).to_string());
@@ -520,9 +529,13 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
         let mut groups: Vec<_> = context_groups.values().collect();
         groups.sort_by(|a, b| b.lines.cmp(&a.lines).then_with(|| a.intent.cmp(&b.intent)));
         for group in groups.iter().take(5) {
+            let intent_label = match &group.intent_type {
+                Some(t) => format!("[{}] {}", t, group.intent),
+                None => group.intent.clone(),
+            };
             out.push_str(&format!(
                 "- Intent: {} ({} lines, {} file{})\n",
-                group.intent,
+                intent_label,
                 group.lines,
                 group.files.len(),
                 if group.files.len() == 1 { "" } else { "s" }
@@ -582,8 +595,8 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
 
     if include_context {
         out.push_str("\n<details>\n<summary>Trace details</summary>\n\n");
-        out.push_str("| Trace | Agent | Intent | Files | Lines |\n");
-        out.push_str("|-------|-------|--------|-------|-------|\n");
+        out.push_str("| Trace | Agent | Type | Intent | Files | Lines |\n");
+        out.push_str("|-------|-------|------|--------|-------|-------|\n");
         for trace in traces.iter().take(30) {
             let meta = trace.agentdiff_metadata();
             let intent = meta
@@ -591,11 +604,17 @@ fn markdown_trace_report(traces: &[AgentTrace], include_context: bool) -> Result
                 .and_then(|m| m.intent.clone())
                 .filter(|s| !s.trim().is_empty())
                 .unwrap_or_else(|| "unspecified".to_string());
+            let intent_type = meta
+                .as_ref()
+                .and_then(|m| m.intent_type.clone())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| "-".to_string());
             let files: HashSet<String> = trace.files.iter().map(|f| f.path.clone()).collect();
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} | {} | {} |\n",
                 short_id(&trace.id),
                 md_cell(trace.agent_name()),
+                md_cell(&intent_type),
                 md_cell(&intent),
                 md_cell(&limited_join(&files, 5)),
                 trace_line_count(trace)
@@ -620,6 +639,7 @@ fn context_json_report(traces: &[AgentTrace]) -> Result<serde_json::Value> {
                 "sha": trace.sha(),
                 "agent": trace.agent_name(),
                 "intent": meta.as_ref().and_then(|m| m.intent.clone()),
+                "intent_type": meta.as_ref().and_then(|m| m.intent_type.clone()),
                 "prompt_excerpt": meta.as_ref().and_then(|m| m.prompt_excerpt.clone()),
                 "files_read": meta.as_ref().map(|m| m.files_read.clone()).unwrap_or_default(),
                 "flags": meta.as_ref().map(|m| m.flags.clone()).unwrap_or_default(),
@@ -823,6 +843,7 @@ mod tests {
             metadata: Some(serde_json::json!({
                 "agentdiff": {
                     "intent": "security hardening",
+                    "intent_type": "security",
                     "prompt_excerpt": "add route guard",
                     "files_read": ["src/auth.rs"],
                     "flags": ["security"],
@@ -860,7 +881,7 @@ mod tests {
     fn markdown_trace_report_includes_review_context() {
         let md = markdown_trace_report(&[sample_trace_with_context()], true).unwrap();
         assert!(md.contains("## Review Context"));
-        assert!(md.contains("Intent: security hardening"));
+        assert!(md.contains("[security] security hardening"));
         assert!(md.contains("Files read: src/auth.rs"));
         assert!(md.contains("| src/api.rs | 3 | cursor | security hardening | trace 550e8400 |"));
     }
@@ -870,6 +891,7 @@ mod tests {
         let json = context_json_report(&[sample_trace_with_context()]).unwrap();
         assert_eq!(json["total_traces"], 1);
         assert_eq!(json["traces"][0]["intent"], "security hardening");
+        assert_eq!(json["traces"][0]["intent_type"], "security");
         assert_eq!(json["traces"][0]["files_read"][0], "src/auth.rs");
     }
 

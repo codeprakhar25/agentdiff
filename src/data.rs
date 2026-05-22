@@ -115,6 +115,9 @@ pub struct AgentdiffMetadata {
     pub files_read: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
+    /// Category: bugfix, feature, refactor, test, docs, security, performance, config, dependency
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trust: Option<u8>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -371,6 +374,7 @@ mod tests {
                     "trust": 92,
                     "flags": ["security"],
                     "intent": "security hardening",
+                    "intent_type": "security",
                     "author": "Prakhar Khatri"
                 }
             })),

@@ -11,6 +11,11 @@ const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
 const TOOL_RECORD_CONTEXT: &str = "record_context";
 const TOOL_SET_INTENT: &str = "set_intent";
 
+const VALID_INTENT_TYPES: &[&str] = &[
+    "bugfix", "feature", "refactor", "test", "docs",
+    "security", "performance", "config", "dependency",
+];
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 struct RecordContextArgs {
@@ -307,8 +312,13 @@ fn set_intent(args: &SetIntentArgs, default_cwd: &Path) -> Result<PathBuf> {
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .context("description is required")?;
-    let description = if description.len() > 500 {
-        &description[..500]
+    let description = if description.chars().count() > 500 {
+        let idx = description
+            .char_indices()
+            .nth(500)
+            .map(|(i, _)| i)
+            .unwrap_or(description.len());
+        &description[..idx]
     } else {
         description
     };
@@ -337,6 +347,9 @@ fn set_intent(args: &SetIntentArgs, default_cwd: &Path) -> Result<PathBuf> {
     });
 
     if let Some(ref intent_type) = args.intent_type {
+        if !VALID_INTENT_TYPES.contains(&intent_type.as_str()) {
+            bail!("invalid intent_type '{}'; must be one of: {}", intent_type, VALID_INTENT_TYPES.join(", "));
+        }
         event["intent_type"] = json!(intent_type);
     }
 

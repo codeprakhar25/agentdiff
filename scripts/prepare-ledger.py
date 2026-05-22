@@ -352,10 +352,11 @@ def main() -> int:
     if intent_events:
         # Use the most recent intent event (prefer matching session, else latest)
         best_intent = None
-        for ie in reversed(intent_events):
-            if str(ie.get("session_id") or "") == session_id:
-                best_intent = ie
-                break
+        if session_id and session_id != "unknown":
+            for ie in reversed(intent_events):
+                if str(ie.get("session_id") or "") == session_id:
+                    best_intent = ie
+                    break
         if not best_intent:
             best_intent = intent_events[-1]
         intent = str(best_intent.get("description") or "").strip() or None

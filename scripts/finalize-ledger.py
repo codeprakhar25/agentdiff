@@ -72,8 +72,8 @@ def remove_consumed_intents(session_path: str) -> None:
     """
     if not os.path.exists(session_path):
         return
+    kept = []
     try:
-        kept = []
         with open(session_path, "r", encoding="utf-8") as f:
             for raw in f:
                 line = raw.strip()
@@ -86,12 +86,18 @@ def remove_consumed_intents(session_path: str) -> None:
                 except Exception:
                     pass
                 kept.append(raw if raw.endswith("\n") else raw + "\n")
-        tmp = session_path + ".tmp"
+    except (OSError, IOError):
+        return
+    tmp = session_path + ".tmp"
+    try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.writelines(kept)
         os.replace(tmp, session_path)
-    except Exception:
-        pass
+    except (OSError, IOError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def sha_already_recorded(traces_path: str, sha: str) -> bool:

@@ -1,7 +1,7 @@
 # agentdiff — Know What Every AI Agent Wrote
 
 <p align="center">
-  <strong>Line-level attribution for AI-assisted code. Audit every agent, model, and prompt across your entire git history.</strong>
+  <strong>Git-native AI code provenance. Records which AI agent wrote which line, signs each attribution with ed25519, and stores it in your own git history — across Claude Code, Cursor, Copilot, Codex, Windsurf, OpenCode, and Gemini.</strong>
 </p>
 
 <p align="center">
@@ -15,9 +15,9 @@
 
 ---
 
-agentdiff hooks into every major AI coding agent — Claude Code, Cursor, Codex, Copilot, Windsurf, OpenCode, Gemini — and writes a permanent, commit-scoped attribution record to your repository. Each record captures the agent name, model, prompt excerpt, and exact line ranges. All of it queryable from the CLI, no server required.
+**agentdiff is an open-source, git-native AI code provenance tool.** It hooks into every major AI coding agent — Claude Code, Cursor, Codex, Copilot, Windsurf, OpenCode, Gemini — and writes a permanent, commit-scoped attribution record to your repository. Each record captures the agent name, model, prompt excerpt, and exact line ranges, signed with ed25519. All of it queryable from the CLI, no server required.
 
-[Watch the launch demo](https://x.com/PrakharKhatri3/status/2049703391488888903) to see the attribution workflow end-to-end.
+[Watch the launch demo](https://x.com/PrakharKhatri3/status/2049703391488888903) to see the attribution workflow end-to-end. Full guide: [AI code provenance](https://www.agentdiff.site/ai-code-provenance).
 
 ```
 agentdiff list
@@ -32,6 +32,22 @@ agentdiff list
   4    d4e5f6a7   Apr 13 17:30  opencode       claude-sonnet-4-6      src/main.rs                      80-94              88       "wire remote_status dispatch"
   5    e5f6a7b8   Apr 13 14:22  human          —                      README.md                        —                 —        —
 ```
+
+---
+
+## Where agentdiff fits
+
+"AI code provenance" gets confused with adjacent tools that answer different questions. agentdiff is the **source-line authorship** layer — it records which agent wrote which line, as signed evidence. The others stack with it rather than compete:
+
+| Layer | Question it answers | Examples | vs agentdiff |
+|-------|--------------------|----------|--------------|
+| **AI code provenance** | Which agent/model wrote this line, with proof? | **agentdiff** | This is the layer. Line-level, cross-agent, ed25519-signed, git-native. |
+| AI content detection | Does this code *look* AI-generated? | Copyleaks, GPTZero | Probabilistic guess after the fact; unreliable on code. Provenance proves, detection guesses. |
+| Supply-chain provenance | How was the *build artifact* assembled? | SLSA, SBOM, Sigstore, AIBOM | Artifact/build layer, not source authorship. Complementary — agentdiff signs the authorship attestation those frameworks increasingly expect. |
+| Code quality / security | Is this code *good* / safe? | SonarQube, Semgrep | Evaluates the code, not who wrote it. Often run alongside agentdiff. |
+| AI usage analytics | How does my team use AI overall? | Maestro, Copilot audit log | Aggregate behavior in a vendor dashboard, not line-level attribution you control. |
+
+> Provenance is recorded **at authorship time** and signed, so it is durable evidence — not a post-hoc estimate. See [AI code provenance tools](https://www.agentdiff.site/ai-code-provenance-tools) for the full category map.
 
 ---
 

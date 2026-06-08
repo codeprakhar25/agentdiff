@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::{Context, Result};
 
 use std::fs;
@@ -50,18 +50,18 @@ pub fn step_configure_copilot(config: &Config) -> Result<()> {
         }
 
         if changed {
-            println!(
+            detail(format!(
                 "{} VS Code Copilot extension installed in {}",
                 ok(),
                 ext_dir.display()
-            );
+            ));
             installed_any = true;
         } else {
-            println!(
+            detail(format!(
                 "{} VS Code Copilot extension already up-to-date in {}",
                 dim(),
                 ext_dir.display()
-            );
+            ));
             installed_any = true;
         }
     }
@@ -71,13 +71,16 @@ pub fn step_configure_copilot(config: &Config) -> Result<()> {
             "{} VS Code extensions directory not found — skipping Copilot setup",
             warn()
         );
-        println!("    Checked: ~/.vscode-server/extensions, ~/.vscode/extensions, ~/.vscode-insiders/extensions");
-        println!(
+        detail("    Checked: ~/.vscode-server/extensions, ~/.vscode/extensions, ~/.vscode-insiders/extensions");
+        detail(format!(
             "    To install manually: mkdir -p ~/.vscode-server/extensions/agentdiff-copilot-0.1.0 && cp {script_dir}/vscode-extension/* ~/.vscode-server/extensions/agentdiff-copilot-0.1.0/",
             script_dir = capture_script.parent().unwrap_or(capture_script.as_path()).display()
-        );
+        ));
     } else {
-        println!("{} Restart VS Code to activate the agentdiff Copilot extension", warn());
+        detail(format!(
+            "{} Restart VS Code to activate the agentdiff Copilot extension",
+            warn()
+        ));
     }
 
     Ok(())

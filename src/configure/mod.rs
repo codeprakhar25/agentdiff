@@ -9,11 +9,11 @@ mod windsurf;
 
 use crate::cli::ConfigureArgs;
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, MultiSelect};
-use std::{fs, io::IsTerminal, path::Path, path::PathBuf, process::Command};
+use std::{fs, io::IsTerminal, path::Path, process::Command};
 
 // Script sources embedded at compile time.
 const CLAUDE_CAPTURE_SCRIPT: &str = include_str!("../../scripts/capture-claude.py");
@@ -31,12 +31,10 @@ const WRITE_NOTE_SCRIPT: &str = include_str!("../../scripts/write-note.py");
 /// Configure global agent hooks — run once per machine, no git repo required.
 pub fn run_configure(config: &mut Config, args: &ConfigureArgs, repo_root: &Path) -> Result<()> {
     println!("{}", "agentdiff configure".bold().cyan());
-    println!();
-    println!(
+    detail(format!(
         "     To disable prompt capture: {}",
         "agentdiff config set capture_prompts false".dimmed()
-    );
-    println!();
+    ));
 
     let selection = resolve_agent_selection(args)?;
 
@@ -94,11 +92,11 @@ pub fn run_configure(config: &mut Config, args: &ConfigureArgs, repo_root: &Path
 
     // Save updated config
     config.save()?;
-    println!(
+    detail(format!(
         "{} Config written to {}",
         ok(),
         Config::config_path().display()
-    );
+    ));
 
     println!();
     print_configure_summary(
@@ -507,32 +505,24 @@ fn print_configure_summary(
         }
     }
 
-    // Gemini CLI + Antigravity: two separate products, two separate files.
+    // Gemini CLI + Antigravity: opt-in only. Surface in the summary ONLY when
+    // agentdiff actually configured it — an untouched (or absent) ~/.gemini must
+    // not generate "not installed" / "hooks missing" noise. Configure it
+    // explicitly with --all or --agents gemini.
     if !no_antigravity {
         let gemini_dir = home.join(".gemini");
-        if !gemini_dir.exists() {
-            println!(
-                "  {} gemini/antigravity  not installed on this machine",
-                dim()
-            );
-        } else {
-            // Gemini CLI: settings.json hooks
-            let cli_ok = std::fs::read_to_string(gemini_dir.join("settings.json"))
-                .map(|s| s.contains("capture-antigravity"))
-                .unwrap_or(false);
-            // Antigravity editor: GEMINI.md managed block
-            let rule_ok = std::fs::read_to_string(gemini_dir.join("GEMINI.md"))
-                .map(|s| s.contains("agentdiff: managed block"))
-                .unwrap_or(false);
-            match (cli_ok, rule_ok) {
-                (true, true) => println!("  {} gemini-cli  hooks registered; antigravity  GEMINI.md rule set", ok()),
-                (true, false) => println!("  {} gemini-cli  hooks ok; {} antigravity  GEMINI.md rule missing — re-run 'agentdiff configure'", ok(), warn()),
-                (false, true) => println!("  {} gemini-cli  hooks missing; {} antigravity  GEMINI.md rule ok — re-run 'agentdiff configure'", warn(), ok()),
-                (false, false) => println!("  {} gemini/antigravity  hooks missing — re-run 'agentdiff configure'", warn()),
-            }
+        let cli_ok = std::fs::read_to_string(gemini_dir.join("settings.json"))
+            .map(|s| s.contains("capture-antigravity"))
+            .unwrap_or(false);
+        let rule_ok = std::fs::read_to_string(gemini_dir.join("GEMINI.md"))
+            .map(|s| s.contains("agentdiff: managed block"))
+            .unwrap_or(false);
+        match (cli_ok, rule_ok) {
+            (true, true) => println!("  {} gemini-cli  hooks registered; antigravity  GEMINI.md rule set", ok()),
+            (true, false) => println!("  {} gemini-cli  hooks ok; {} antigravity  GEMINI.md rule missing — re-run 'agentdiff configure'", ok(), warn()),
+            (false, true) => println!("  {} gemini-cli  hooks missing; {} antigravity  GEMINI.md rule ok — re-run 'agentdiff configure'", warn(), ok()),
+            (false, false) => {} // not configured by agentdiff — stay silent.
         }
-    } else {
-        println!("  {} gemini/antigravity  skipped (--no-antigravity)", dim());
     }
 
     // Codex: check both config.toml and hooks.json.
@@ -541,26 +531,24 @@ fn print_configure_summary(
         if !codex_dir.exists() {
             println!("  {} codex  not installed on this machine", dim());
         } else {
-            let toml_ok = std::fs::read_to_string(codex_dir.join("config.toml"))
-                .map(|s| s.contains("capture-codex"))
-                .unwrap_or(false);
+            // The capture hook lives in hooks.json; config.toml only carries the
+            // features.codex_hooks=true flag (notify is intentionally removed to
+            // avoid double-capture, so it is NOT a marker).
             let hooks_ok = std::fs::read_to_string(codex_dir.join("hooks.json"))
                 .map(|s| s.contains("capture-codex"))
                 .unwrap_or(false);
-            match (toml_ok, hooks_ok) {
-                (true, true) => println!("  {} codex  registered (config.toml + hooks.json)", ok()),
-                (true, false) => println!(
-                    "  {} codex  config.toml ok, hooks.json missing — re-run 'agentdiff configure'",
-                    warn()
-                ),
-                (false, true) => println!(
-                    "  {} codex  hooks.json ok, config.toml missing — re-run 'agentdiff configure'",
-                    warn()
-                ),
-                (false, false) => println!(
+            let flag_ok = std::fs::read_to_string(codex_dir.join("config.toml"))
+                .ok()
+                .and_then(|s| s.parse::<toml::Value>().ok())
+                .and_then(|v| v.get("features")?.get("codex_hooks")?.as_bool())
+                .unwrap_or(false);
+            if hooks_ok && flag_ok {
+                println!("  {} codex  registered", ok());
+            } else {
+                println!(
                     "  {} codex  hook missing — re-run 'agentdiff configure'",
                     warn()
-                ),
+                );
             }
         }
     } else {
@@ -652,7 +640,7 @@ fn check_python3() -> Result<()> {
         Ok(out) if out.status.success() => {
             let ver = String::from_utf8_lossy(&out.stdout);
             let ver = ver.trim();
-            println!("{} {python_cmd} found: {ver}", ok());
+            detail(format!("{} {python_cmd} found: {ver}", ok()));
             Ok(())
         }
         _ => Err(anyhow::anyhow!(
@@ -670,7 +658,7 @@ fn step_create_dirs(config: &Config) -> Result<()> {
     ];
     for dir in &dirs_to_create {
         fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        println!("{} mkdir {}", dim(), dir.display());
+        detail(format!("{} mkdir {}", dim(), dir.display()));
     }
     Ok(())
 }
@@ -694,9 +682,9 @@ fn step_install_scripts(config: &Config) -> Result<()> {
         let existing = fs::read_to_string(&dest).unwrap_or_default();
         if existing != *content {
             fs::write(&dest, content).with_context(|| format!("writing {}", dest.display()))?;
-            println!("{} installed {}", ok(), dest.display());
+            detail(format!("{} installed {}", ok(), dest.display()));
         } else {
-            println!("{} up-to-date {}", dim(), dest.display());
+            detail(format!("{} up-to-date {}", dim(), dest.display()));
         }
     }
     Ok(())
@@ -719,6 +707,7 @@ mod tests {
             no_copilot: false,
             no_mcp: false,
             no_agents_md: false,
+            verbose: false,
         }
     }
 

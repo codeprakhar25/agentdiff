@@ -1,5 +1,30 @@
 use anyhow::Context;
 use colored::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+// ── Verbosity ───────────────────────────────────────────────────────────────
+//
+// Setup commands (configure/init) are quiet by default — they print a compact
+// result summary and warnings only. `--verbose` restores the full per-step log
+// for debugging. Step-level progress lines go through `detail()` so they vanish
+// unless verbose mode is on.
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_verbose(v: bool) {
+    VERBOSE.store(v, Ordering::Relaxed);
+}
+
+pub fn verbose() -> bool {
+    VERBOSE.load(Ordering::Relaxed)
+}
+
+/// Print a per-step progress line, suppressed unless `--verbose` is set.
+pub fn detail(msg: impl std::fmt::Display) {
+    if verbose() {
+        println!("{msg}");
+    }
+}
 
 // ── Output prefixes ─────────────────────────────────────────────────────────
 //

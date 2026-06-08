@@ -55,10 +55,12 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Command::Configure(args) => {
+            util::set_verbose(args.verbose);
             let mut cfg = config;
             configure::run_configure(&mut cfg, &args, &repo_root)
         }
         Command::Init(args) => {
+            util::set_verbose(args.verbose);
             let mut cfg = config;
             init::run_init(&repo_root, &mut cfg, args.no_git_hook)
         }

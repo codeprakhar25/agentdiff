@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::Result;
 
 use std::fs;
@@ -38,17 +38,17 @@ pub fn step_configure_opencode(config: &Config) -> Result<()> {
     if existing != plugin_content {
         fs::create_dir_all(&plugins_dir)?;
         fs::write(&plugin_path, plugin_content)?;
-        println!(
+        detail(format!(
             "{} OpenCode plugin configured in {}",
             ok(),
             plugin_path.display()
-        );
+        ));
     } else {
-        println!(
+        detail(format!(
             "{} OpenCode plugin already present in {}",
             dim(),
             plugin_path.display()
-        );
+        ));
     }
 
     Ok(())

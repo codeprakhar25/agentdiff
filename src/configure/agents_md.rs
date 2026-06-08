@@ -1,4 +1,4 @@
-use crate::util::{dim, ok};
+use crate::util::{detail, dim, ok};
 use anyhow::Result;
 use std::path::Path;
 
@@ -59,11 +59,11 @@ pub fn step_configure_agents_md(repo_root: &Path) -> Result<()> {
     // AGENTS.md is a per-project file. Skip when not inside a git repository
     // (e.g. `agentdiff configure` run from a home directory for machine-global setup).
     if !repo_root.join(".git").exists() {
-        println!(
+        detail(format!(
             "{} AGENTS.md skipped (not a git repository: {})",
             dim(),
             repo_root.display()
-        );
+        ));
         return Ok(());
     }
 
@@ -77,17 +77,20 @@ pub fn step_configure_agents_md(repo_root: &Path) -> Result<()> {
             let end_pos = start_pos + rel_end + AGENTS_MD_END.len();
             let current_block = &existing[start_pos..end_pos];
             if current_block == block {
-                println!("{} AGENTS.md AgentDiff section already up-to-date", dim());
+                detail(format!(
+                    "{} AGENTS.md AgentDiff section already up-to-date",
+                    dim()
+                ));
                 return Ok(());
             }
             // Update existing block in place.
             let updated = format!("{}{}{}", &existing[..start_pos], block, &existing[end_pos..]);
             std::fs::write(&agents_md_path, updated)?;
-            println!(
+            detail(format!(
                 "{} AGENTS.md AgentDiff section updated in {}",
                 ok(),
                 agents_md_path.display()
-            );
+            ));
             return Ok(());
         }
         // Start sentinel present but no end sentinel — file is malformed. Warn and skip
@@ -111,17 +114,17 @@ pub fn step_configure_agents_md(repo_root: &Path) -> Result<()> {
     std::fs::write(&agents_md_path, updated)?;
 
     if existing.is_empty() {
-        println!(
+        detail(format!(
             "{} AGENTS.md created with AgentDiff section at {}",
             ok(),
             agents_md_path.display()
-        );
+        ));
     } else {
-        println!(
+        detail(format!(
             "{} AGENTS.md AgentDiff section added to {}",
             ok(),
             agents_md_path.display()
-        );
+        ));
     }
     Ok(())
 }

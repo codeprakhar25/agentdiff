@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::util::{dim, ok};
+use crate::util::{detail, dim, ok};
 use anyhow::{Context, Result};
 
 use std::fs;
@@ -81,17 +81,17 @@ pub fn step_configure_windsurf(config: &Config) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
         fs::write(&hooks_path, serde_json::to_string_pretty(&hooks_cfg)?)?;
-        println!(
+        detail(format!(
             "{} Windsurf hooks configured in {}",
             ok(),
             hooks_path.display()
-        );
+        ));
     } else {
-        println!(
+        detail(format!(
             "{} Windsurf hooks already present in {}",
             dim(),
             hooks_path.display()
-        );
+        ));
     }
     Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::config::{Config, RepoConfig};
-use crate::util::{ok, print_command_header, warn};
+use crate::util::{detail, ok, print_command_header, warn};
 use anyhow::{Context, Result, bail};
 use colored::Colorize;
 use std::{fs, path::Path, process::Command};
@@ -8,8 +8,7 @@ use std::{fs, path::Path, process::Command};
 /// Run `agentdiff configure` first to set up global agent hooks.
 pub fn run_init(repo_root: &Path, config: &mut Config, no_git_hook: bool) -> Result<()> {
     print_command_header("init");
-    println!("  Repo: {}", repo_root.display());
-    println!();
+    detail(format!("  Repo: {}", repo_root.display()));
 
     // Warn if configure hasn't been run yet (scripts dir empty or missing).
     let scripts_dir = config.scripts_root();
@@ -36,13 +35,12 @@ pub fn run_init(repo_root: &Path, config: &mut Config, no_git_hook: bool) -> Res
 
     // Step 3 — save updated config
     config.save()?;
-    println!(
+    detail(format!(
         "  {} config written to {}",
         ok(),
         Config::config_path().display()
-    );
+    ));
 
-    println!();
     println!("  {}", "init complete".bold().green());
     Ok(())
 }
@@ -111,10 +109,8 @@ python3 "$SCRIPTS_DIR/finalize-ledger.py" "$REPO_ROOT" "$PENDING_LEDGER" "$PENDI
 # Sign the last trace entry (no-op if keys not initialized).
 agentdiff sign-entry 2>/dev/null || true
 
-# Print a post-commit attribution summary.
-echo ""
-agentdiff -C "$REPO_ROOT" status 2>/dev/null || true
-echo ""
+# Print a one-line post-commit attribution summary (silent if human-only).
+agentdiff -C "$REPO_ROOT" status --oneline 2>/dev/null || true
 exit 0
 "#,
         repo_root = repo_root.display(),
@@ -182,10 +178,10 @@ exit 0
         &pre_push_content,
     )?;
 
-    println!(
+    detail(format!(
         "  {} installed git hooks (pre-commit, post-commit, pre-push)",
         ok()
-    );
+    ));
     Ok(())
 }
 
@@ -213,18 +209,19 @@ fn step_configure_refspec(repo_root: &Path) -> Result<()> {
             .status()
             .context("adding remote.origin.fetch agentdiff refspec")?;
         if status.success() {
-            println!("  {} added fetch refspec for refs/agentdiff/*", ok());
+            detail(format!("  {} added fetch refspec for refs/agentdiff/*", ok()));
         } else {
+            // Keep this visible — a missing remote means traces can't be pushed.
             println!(
                 "  {} could not add fetch refspec (no remote origin?)",
                 warn()
             );
         }
     } else {
-        println!(
+        detail(format!(
             "  {} fetch refspec for refs/agentdiff/* already present",
             crate::util::dim()
-        );
+        ));
     }
 
     Ok(())
@@ -238,7 +235,7 @@ fn install_managed_hook(path: &Path, marker: &str, content: &str) -> Result<()> 
         } else {
             let combined = format!("{}\n\n{}", existing.trim_end(), content);
             fs::write(path, combined)?;
-            println!("  {} appended to existing {}", ok(), path.display());
+            detail(format!("  {} appended to existing {}", ok(), path.display()));
         }
     } else {
         fs::write(path, content)?;
@@ -260,7 +257,7 @@ fn step_register_repo(repo_root: &Path, config: &mut Config) -> Result<()> {
             path: repo_root.to_path_buf(),
             slug,
         });
-        println!("  {} repo registered in config", ok());
+        detail(format!("  {} repo registered in config", ok()));
     }
 
     fs::create_dir_all(Config::repo_session_dir(repo_root))?;

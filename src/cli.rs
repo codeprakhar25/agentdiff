@@ -87,6 +87,10 @@ pub struct StatusArgs {
     /// With --remote: only show developers active within this window (e.g. 7, 7d, 48h)
     #[arg(long, value_name = "DURATION")]
     pub since: Option<String>,
+
+    /// Print a single-line attribution summary for HEAD (used by the post-commit hook)
+    #[arg(long, hide = true)]
+    pub oneline: bool,
 }
 
 #[derive(Args, Debug)]
@@ -134,6 +138,10 @@ pub struct ConfigureArgs {
     /// Skip writing/updating the AgentDiff section in AGENTS.md
     #[arg(long)]
     pub no_agents_md: bool,
+
+    /// Print the full per-step setup log (quiet by default)
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]
@@ -141,6 +149,10 @@ pub struct InitArgs {
     /// Skip git pre-commit and post-commit hook setup
     #[arg(long)]
     pub no_git_hook: bool,
+
+    /// Print the full per-step setup log (quiet by default)
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Args, Debug)]

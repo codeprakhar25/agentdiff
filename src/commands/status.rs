@@ -11,6 +11,9 @@ use crate::store::{self, Store};
 use crate::util::{dim, ok, print_command_header, warn};
 
 pub fn run(store: &Store, args: &StatusArgs) -> Result<()> {
+    if args.oneline {
+        return run_oneline(store);
+    }
     if args.remote {
         return run_remote(store, args);
     }
@@ -24,6 +27,76 @@ pub fn run(store: &Store, args: &StatusArgs) -> Result<()> {
     print_agent_hook_status();
     print_unpushed_status(store);
 
+    Ok(())
+}
+
+/// One-line attribution summary for HEAD, printed by the post-commit hook.
+/// Stays silent when the commit has no AI-authored trace (honest human-only
+/// commits print nothing). Best-effort — never errors out the commit.
+fn run_oneline(store: &Store) -> Result<()> {
+    let head = {
+        let out = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&store.repo_root)
+            .output();
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => return Ok(()),
+        }
+    };
+    if head.is_empty() {
+        return Ok(());
+    }
+
+    let traces = store.find_traces_by_sha(&head).unwrap_or_default();
+    // A trace counts as AI-authored only if it has at least one conversation
+    // contributed by an AI. Human commits write a trace whose tool.name is the
+    // git author and whose contributor.type is "human" — those stay quiet.
+    let is_ai = |t: &&AgentTrace| {
+        t.files
+            .iter()
+            .flat_map(|f| f.conversations.iter())
+            .any(|c| c.contributor.contributor_type == "ai")
+    };
+    let ai: Vec<&AgentTrace> = traces.iter().filter(is_ai).collect();
+    if ai.is_empty() {
+        return Ok(());
+    }
+
+    // Only count files that carry AI authorship in this commit.
+    let files: std::collections::BTreeSet<&str> = ai
+        .iter()
+        .flat_map(|t| {
+            t.files
+                .iter()
+                .filter(|f| {
+                    f.conversations
+                        .iter()
+                        .any(|c| c.contributor.contributor_type == "ai")
+                })
+                .map(|f| f.path.as_str())
+        })
+        .collect();
+    let agents: Vec<&str> = {
+        let set: std::collections::BTreeSet<&str> = ai.iter().map(|t| t.agent_name()).collect();
+        set.into_iter().collect()
+    };
+    let signed = ai.iter().all(|t| t.sig.is_some());
+
+    let sig_label = if signed {
+        "signed".green()
+    } else {
+        "unsigned".yellow()
+    };
+    println!(
+        "  {} {} {} file{} · {} · {}",
+        "agentdiff".bold().cyan(),
+        "✓".green(),
+        files.len(),
+        if files.len() == 1 { "" } else { "s" },
+        agents.join(", "),
+        sig_label
+    );
     Ok(())
 }
 
@@ -221,11 +294,6 @@ fn print_agent_hook_status() {
             marker: "capture-cursor",
         },
         AgentCheck {
-            name: "codex",
-            config_path_parts: &[".codex", "config.toml"],
-            marker: "capture-codex",
-        },
-        AgentCheck {
             name: "windsurf",
             config_path_parts: &[".codeium", "windsurf", "hooks.json"],
             marker: "capture-windsurf",
@@ -251,25 +319,7 @@ fn print_agent_hook_status() {
         let content = std::fs::read_to_string(&path).unwrap_or_default();
         let registered = content.contains(check.marker);
         if registered {
-            // Codex: additionally verify features.codex_hooks = true in config.toml.
-            if check.name == "codex" {
-                let hooks_flag = content
-                    .parse::<toml::Value>()
-                    .ok()
-                    .and_then(|v| v.get("features")?.get("codex_hooks")?.as_bool())
-                    .unwrap_or(false);
-                if hooks_flag {
-                    println!("  {} agent hook     codex registered", prefix(ok()));
-                } else {
-                    println!(
-                        "  {} agent hook     codex hook registered but features.codex_hooks not enabled — re-run 'agentdiff configure'",
-                        prefix(warn())
-                    );
-                    any_missing = true;
-                }
-            } else {
-                println!("  {} agent hook     {} registered", prefix(ok()), check.name);
-            }
+            println!("  {} agent hook     {} registered", prefix(ok()), check.name);
         } else {
             println!(
                 "  {} agent hook     {} config found but agentdiff hook missing — re-run 'agentdiff configure'",
@@ -280,17 +330,47 @@ fn print_agent_hook_status() {
         }
     }
 
-    // Gemini CLI + Antigravity: two separate products sharing ~/.gemini/
+    // Codex: the capture hook lives in ~/.codex/hooks.json; config.toml only
+    // carries the features.codex_hooks=true flag. (The legacy `notify` key is
+    // intentionally removed to avoid double-capture, so it is NOT a marker.)
+    // Only surface codex when it is actually installed on this machine.
+    {
+        let codex_dir = home.join(".codex");
+        if codex_dir.exists() {
+            any_checked = true;
+            let hook_ok = std::fs::read_to_string(codex_dir.join("hooks.json"))
+                .map(|s| s.contains("capture-codex"))
+                .unwrap_or(false);
+            let flag_ok = std::fs::read_to_string(codex_dir.join("config.toml"))
+                .ok()
+                .and_then(|s| s.parse::<toml::Value>().ok())
+                .and_then(|v| v.get("features")?.get("codex_hooks")?.as_bool())
+                .unwrap_or(false);
+            if hook_ok && flag_ok {
+                println!("  {} agent hook     codex registered", prefix(ok()));
+            } else {
+                println!(
+                    "  {} agent hook     codex installed but agentdiff hook missing — re-run 'agentdiff configure'",
+                    prefix(warn())
+                );
+                any_missing = true;
+            }
+        }
+    }
+
+    // Gemini CLI + Antigravity: fully opt-in. Only confirm what agentdiff has
+    // actually registered — never nag about the *other* half being missing.
+    // Gemini is configured only when explicitly requested (--all / --agents
+    // gemini), so an untouched or half-configured ~/.gemini stays quiet rather
+    // than emitting "hooks missing" noise on every status.
     {
         let gemini_dir = home.join(".gemini");
         if gemini_dir.exists() {
-            any_checked = true;
             let settings_raw =
                 std::fs::read_to_string(gemini_dir.join("settings.json")).unwrap_or_default();
-            let cli_ok = settings_raw.contains("capture-antigravity");
-            // Additionally verify tools.enableHooks = true — without this, Gemini ignores hooks
-            // even when the hook entries are present in settings.json.
-            let hooks_enabled = cli_ok
+            // Require both the hook entry AND tools.enableHooks=true — without the
+            // flag Gemini silently ignores the hooks.
+            let cli_ok = settings_raw.contains("capture-antigravity")
                 && serde_json::from_str::<serde_json::Value>(&settings_raw)
                     .ok()
                     .and_then(|v| v.get("tools")?.get("enableHooks")?.as_bool())
@@ -298,52 +378,15 @@ fn print_agent_hook_status() {
             let rule_ok = std::fs::read_to_string(gemini_dir.join("GEMINI.md"))
                 .map(|s| s.contains("agentdiff: managed block"))
                 .unwrap_or(false);
-            match (cli_ok, rule_ok) {
-                (true, true) => {
-                    if hooks_enabled {
-                        println!(
-                            "  {} agent hook     gemini-cli registered; antigravity rule set",
-                            prefix(ok())
-                        );
-                    } else {
-                        println!(
-                            "  {} agent hook     gemini-cli registered; antigravity rule set but tools.enableHooks not set — re-run 'agentdiff configure'",
-                            prefix(warn())
-                        );
-                        any_missing = true;
-                    }
-                }
-                (true, false) => {
-                    if hooks_enabled {
-                        println!("  {} agent hook     gemini-cli registered", prefix(ok()));
-                    } else {
-                        println!(
-                            "  {} agent hook     gemini-cli registered but tools.enableHooks not set — re-run 'agentdiff configure'",
-                            prefix(warn())
-                        );
-                        any_missing = true;
-                    }
-                    println!(
-                        "  {} agent hook     antigravity GEMINI.md rule missing — re-run 'agentdiff configure'",
-                        prefix(warn())
-                    );
-                    any_missing = true;
-                }
-                (false, true) => {
-                    println!(
-                        "  {} agent hook     gemini-cli hooks missing — re-run 'agentdiff configure'",
-                        prefix(warn())
-                    );
-                    println!("  {} agent hook     antigravity rule set", prefix(ok()));
-                    any_missing = true;
-                }
-                (false, false) => {
-                    println!(
-                        "  {} agent hook     gemini/antigravity config found but hooks missing — re-run 'agentdiff configure'",
-                        prefix(warn())
-                    );
-                    any_missing = true;
-                }
+            if cli_ok || rule_ok {
+                any_checked = true;
+                let label = match (cli_ok, rule_ok) {
+                    (true, true) => "gemini-cli registered; antigravity rule set",
+                    (true, false) => "gemini-cli registered",
+                    (false, true) => "antigravity rule set",
+                    (false, false) => unreachable!(),
+                };
+                println!("  {} agent hook     {label}", prefix(ok()));
             }
         }
     }

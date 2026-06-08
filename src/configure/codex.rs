@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::{Context, Result};
 
 use std::fs;
@@ -87,13 +87,13 @@ fn step_configure_codex_toml(
     if changed {
         fs::create_dir_all(codex_dir)?;
         fs::write(config_path, toml::to_string_pretty(&cfg_val)?)?;
-        println!(
+        detail(format!(
             "{} Codex config.toml updated (codex_hooks=true, notify removed) in {}",
             ok(),
             config_path.display()
-        );
+        ));
     } else {
-        println!("{} Codex config.toml already up-to-date", dim());
+        detail(format!("{} Codex config.toml already up-to-date", dim()));
     }
     Ok(())
 }
@@ -128,10 +128,10 @@ fn step_configure_codex_hooks(config: &Config, codex_dir: &std::path::Path) -> R
         .entry("hooks")
         .or_insert(serde_json::json!({}));
     if hooks_val.is_array() {
-        println!(
+        detail(format!(
             "{} Codex hooks.json: migrating old flat-array format to event-keyed format",
             warn()
-        );
+        ));
         *hooks_val = serde_json::json!({});
     }
     let hooks_map = hooks_val.as_object_mut().unwrap();
@@ -207,17 +207,17 @@ fn step_configure_codex_hooks(config: &Config, codex_dir: &std::path::Path) -> R
             fs::create_dir_all(parent)?;
         }
         fs::write(&hooks_path, serde_json::to_string_pretty(&root)?)?;
-        println!(
+        detail(format!(
             "{} Codex hooks.json configured (UserPromptSubmit + Stop) in {}",
             ok(),
             hooks_path.display()
-        );
+        ));
     } else {
-        println!(
+        detail(format!(
             "{} Codex hooks.json already up-to-date in {}",
             dim(),
             hooks_path.display()
-        );
+        ));
     }
     Ok(())
 }

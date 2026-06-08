@@ -9,7 +9,7 @@
 ///    global rules file instructs the agent to run the capture script after each
 ///    file edit. This is best-effort (LLM-followed) rather than guaranteed.
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::{Context, Result};
 use colored::Colorize;
 use std::fs;
@@ -159,13 +159,13 @@ fn step_configure_gemini_hooks(
     if changed {
         fs::create_dir_all(gemini_dir)?;
         fs::write(settings_path, serde_json::to_string_pretty(&cfg)?)?;
-        println!(
+        detail(format!(
             "{} Gemini CLI hooks configured in {}",
             ok(),
             settings_path.display()
-        );
+        ));
     } else {
-        println!("{} Gemini CLI hooks already present", dim());
+        detail(format!("{} Gemini CLI hooks already present", dim()));
     }
     Ok(())
 }
@@ -216,10 +216,10 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
         if let Some(end_pos) = existing[start_pos..].find(GEMINI_MD_END) {
             let current_block = &existing[start_pos..start_pos + end_pos + GEMINI_MD_END.len()];
             if current_block == rule_block {
-                println!(
+                detail(format!(
                     "{} Antigravity GEMINI.md rule already up-to-date",
                     dim()
-                );
+                ));
                 return Ok(());
             }
             // Update existing block (script path may have changed).
@@ -231,14 +231,15 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
             );
             fs::create_dir_all(gemini_dir)?;
             fs::write(&gemini_md_path, updated)?;
-            println!(
+            detail(format!(
                 "{} Antigravity GEMINI.md rule updated in {}",
                 ok(),
                 gemini_md_path.display()
-            );
-            println!(
-                "{}",
-                "    Note: rule-based capture is best-effort (agent must follow the rule).".dimmed()
+            ));
+            detail(
+                "    Note: rule-based capture is best-effort (agent must follow the rule)."
+                    .dimmed()
+                    .to_string(),
             );
             return Ok(());
         }
@@ -253,14 +254,15 @@ fn step_configure_antigravity_rule(gemini_dir: &std::path::Path) -> Result<()> {
     let updated = format!("{}{}{}\n", existing, separator, rule_block);
     fs::create_dir_all(gemini_dir)?;
     fs::write(&gemini_md_path, updated)?;
-    println!(
+    detail(format!(
         "{} Antigravity GEMINI.md rule added to {}",
         ok(),
         gemini_md_path.display()
-    );
-    println!(
-        "{}",
-        "    Note: rule-based capture is best-effort (agent must follow the rule).".dimmed()
+    ));
+    detail(
+        "    Note: rule-based capture is best-effort (agent must follow the rule)."
+            .dimmed()
+            .to_string(),
     );
     Ok(())
 }

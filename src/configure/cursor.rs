@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::util::{dim, ok, warn};
+use crate::util::{detail, dim, ok, warn};
 use anyhow::{Context, Result};
 
 use std::fs;
@@ -134,13 +134,17 @@ fn configure_cursor_hooks_file(
 
     if changed {
         fs::write(hooks_path, serde_json::to_string_pretty(&hooks_cfg)?)?;
-        println!(
+        detail(format!(
             "{} Cursor hooks registered in {}",
             ok(),
             hooks_path.display()
-        );
+        ));
     } else {
-        println!("{} Cursor hooks already present in {}", dim(), hooks_path.display());
+        detail(format!(
+            "{} Cursor hooks already present in {}",
+            dim(),
+            hooks_path.display()
+        ));
     }
     Ok(())
 }
